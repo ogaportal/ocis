@@ -12,7 +12,7 @@ on:
 
 env:
   TERRAFORM_VERSION: '1.6.0'
-  ANSIBLE_VERSION: '2.15.0'
+  ANSIBLE_VERSION: '10.5.0'
 
 jobs:
   # Job de build - Toujours exécuté (même dans les PRs)
