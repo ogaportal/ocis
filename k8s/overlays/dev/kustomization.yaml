@@ -1,0 +1,58 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+bases:
+  - ../../base
+
+namespace: owncloud
+
+patches:
+  - target:
+      kind: Ingress
+      name: keycloak-ingress
+    patch: |-
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: dev.lesaiglesbraves.online
+      - op: replace
+        path: /spec/rules/0/host
+        value: dev.lesaiglesbraves.online
+  
+  - target:
+      kind: Ingress
+      name: ocis-ingress
+    patch: |-
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: dev.lesaiglesbraves.online
+      - op: replace
+        path: /spec/rules/0/host
+        value: dev.lesaiglesbraves.online
+  
+  - target:
+      kind: SecretProviderClass
+      name: keycloak-tls
+    patch: |-
+      - op: replace
+        path: /spec/parameters/keyvaultName
+        value: owncloudkvdev
+  
+  - target:
+      kind: SecretProviderClass
+      name: ocis-tls
+    patch: |-
+      - op: replace
+        path: /spec/parameters/keyvaultName
+        value: owncloudkvdev
+
+configMapGenerator:
+  - name: keycloak-config
+    behavior: merge
+    literals:
+      - hostname=dev.lesaiglesbraves.online
+  
+  - name: ocis-config
+    behavior: merge
+    literals:
+      - ocis-url=https://dev.lesaiglesbraves.online
+      - oidc-issuer=https://dev.lesaiglesbraves.online/realms/owncloud

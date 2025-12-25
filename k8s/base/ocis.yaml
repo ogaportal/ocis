@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ocis
+  namespace: owncloud
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ocis
+  template:
+    metadata:
+      labels:
+        app: ocis
+    spec:
+      containers:
+      - name: ocis
+        image: owncloud/ocis:latest
+        ports:
+        - containerPort: 9200
+          name: https
+        env:
+        - name: OCIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ocis-config
+              key: ocis-url
+        - name: OCIS_INSECURE
+          value: "false"
+        - name: PROXY_TLS
+          value: "true"
+        - name: PROXY_TLS_CERT
+          value: /etc/ocis/tls/tls.crt
+        - name: PROXY_TLS_KEY
+          value: /etc/ocis/tls/tls.key
+        # Azure Blob Storage configuration
+        - name: STORAGE_USERS_DRIVER
+          value: "azureblob"
+        - name: STORAGE_USERS_AZUREBLOB_ACCOUNT_NAME
+          valueFrom:
+            secretKeyRef:
+              name: azure-storage-secret
+              key: account-name
+        - name: STORAGE_USERS_AZUREBLOB_ACCOUNT_KEY
+          valueFrom:
+            secretKeyRef:
+              name: azure-storage-secret
+              key: account-key
+        - name: STORAGE_USERS_AZUREBLOB_CONTAINER_NAME
+          value: "ocis-data"
+        # Keycloak OIDC configuration
+        - name: PROXY_OIDC_ISSUER
+          valueFrom:
+            configMapKeyRef:
+              name: ocis-config
+              key: oidc-issuer
+        - name: WEB_OIDC_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: oidc-client-id
+        - name: WEB_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: oidc-client-secret
+        - name: OCIS_ADMIN_USER_ID
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-user-id
+        - name: IDM_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: tls
+          mountPath: /etc/ocis/tls
+          readOnly: true
+        - name: config
+          mountPath: /etc/ocis/config
+      volumes:
+      - name: tls
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "ocis-tls"
+      - name: config
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ocis
+  namespace: owncloud
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9200
+    targetPort: 9200
+    name: https
+  selector:
+    app: ocis

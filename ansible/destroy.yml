@@ -1,0 +1,47 @@
+---
+- name: Destroy ownCloud OCIS and Keycloak deployment
+  hosts: "{{ target_env }}"
+  gather_facts: false
+  
+  vars:
+    kubeconfig_path: "{{ lookup('env', 'KUBECONFIG') }}"
+    
+  tasks:
+    - name: Delete Kubernetes resources
+      kubernetes.core.k8s:
+        state: absent
+        src: "{{ playbook_dir }}/../k8s/overlays/{{ target_env }}"
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Delete namespace
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: owncloud
+        state: absent
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Uninstall NGINX Ingress Controller
+      kubernetes.core.helm:
+        name: ingress-nginx
+        release_namespace: ingress-nginx
+        state: absent
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Uninstall cert-manager
+      kubernetes.core.helm:
+        name: cert-manager
+        release_namespace: cert-manager
+        state: absent
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Uninstall Azure Key Vault CSI Driver
+      kubernetes.core.helm:
+        name: csi-secrets-store-provider-azure
+        release_namespace: kube-system
+        state: absent
+        kubeconfig: "{{ kubeconfig_path }}"
+
+    - name: Display cleanup information
+      debug:
+        msg: "Cleanup completed successfully!"

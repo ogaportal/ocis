@@ -1,0 +1,45 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: owncloud
+
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - keycloak.yaml
+  - ocis.yaml
+  - ingress.yaml
+  - secret-provider-class.yaml
+
+configMapGenerator:
+  - name: keycloak-config
+    literals:
+      - hostname=KEYCLOAK_HOSTNAME
+  
+  - name: ocis-config
+    literals:
+      - ocis-url=https://OCIS_HOSTNAME
+      - oidc-issuer=https://KEYCLOAK_HOSTNAME/realms/owncloud
+
+secretGenerator:
+  - name: postgres-secret
+    literals:
+      - username=postgres
+      - password=POSTGRES_PASSWORD
+  
+  - name: keycloak-secret
+    literals:
+      - admin-username=admin
+      - admin-password=KEYCLOAK_ADMIN_PASSWORD
+  
+  - name: ocis-secret
+    literals:
+      - admin-user-id=admin
+      - admin-password=OCIS_ADMIN_PASSWORD
+      - oidc-client-id=ocis
+      - oidc-client-secret=OIDC_CLIENT_SECRET
+  
+  - name: azure-storage-secret
+    literals:
+      - account-name=STORAGE_ACCOUNT_NAME
+      - account-key=STORAGE_ACCOUNT_KEY
