@@ -1,0 +1,396 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  pull_request:
+    branches:
+      - develop
+      - main
+
+env:
+  TERRAFORM_VERSION: '1.6.0'
+  ANSIBLE_VERSION: '2.15.0'
+
+jobs:
+  # Job de build - Toujours exécuté (même dans les PRs)
+  build:
+    name: Build and Validate
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        run: |
+          echo "🔍 Checking Terraform format..."
+          terraform fmt -check -recursive terraform/
+        continue-on-error: true
+
+      - name: Terraform Validate (Dev)
+        working-directory: terraform/environments/dev
+        run: |
+          echo "✅ Validating Dev environment..."
+          terraform init -backend=false
+          terraform validate
+
+      - name: Terraform Validate (Prod)
+        working-directory: terraform/environments/prod
+        run: |
+          echo "✅ Validating Prod environment..."
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Kubernetes Manifests
+        run: |
+          echo "🔍 Validating Kubernetes manifests..."
+          
+          # Install kustomize
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+          
+          # Validate dev overlay
+          echo "Validating dev overlay..."
+          kustomize build k8s/overlays/dev > /dev/null
+          
+          # Validate prod overlay
+          echo "Validating prod overlay..."
+          kustomize build k8s/overlays/prod > /dev/null
+          
+          echo "✅ All manifests are valid"
+
+      - name: Validate Ansible Playbooks
+        run: |
+          echo "🔍 Validating Ansible playbooks..."
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          ansible-playbook ansible/deploy.yml --syntax-check
+          ansible-playbook ansible/destroy.yml --syntax-check
+          echo "✅ All playbooks are valid"
+
+      - name: Build Summary
+        run: |
+          echo "## 🎉 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Terraform configuration valid" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Kubernetes manifests valid" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Ansible playbooks valid" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "ℹ️ **Pull Request** - Deployment skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🚀 **Branch: ${{ github.ref_name }}** - Deployment will proceed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Détermine l'environnement basé sur la branche
+  set-environment:
+    name: Set Environment
+    runs-on: ubuntu-latest
+    # Seulement si pas une PR et branche develop ou main
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    needs: build
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+    
+    steps:
+      - name: Determine Environment
+        id: set-env
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+            echo "🌐 Environment: **Production**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "🧪 Environment: **Development**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Vérification et génération des certificats
+  check-certificates:
+    name: Check and Generate Certificates
+    runs-on: ubuntu-latest
+    needs: set-environment
+    # Seulement si pas une PR et branche develop ou main
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Check Certificates in Key Vault
+        id: check-certs
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          KEY_VAULT_NAME="owncloudkv${ENVIRONMENT}"
+          
+          echo "🔍 Checking certificates in Key Vault: $KEY_VAULT_NAME"
+          
+          # Vérifier si les certificats existent
+          CERT_EXISTS=$(az keyvault certificate list --vault-name $KEY_VAULT_NAME --query "length([?name=='tls-cert'])" -o tsv 2>/dev/null || echo "0")
+          KEY_EXISTS=$(az keyvault secret list --vault-name $KEY_VAULT_NAME --query "length([?name=='tls-key'])" -o tsv 2>/dev/null || echo "0")
+          
+          if [ "$CERT_EXISTS" -gt 0 ] && [ "$KEY_EXISTS" -gt 0 ]; then
+            echo "✅ Certificates already exist in Key Vault"
+            echo "certificates_exist=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Certificates not found in Key Vault"
+            echo "certificates_exist=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate Self-Signed Certificates
+        if: steps.check-certs.outputs.certificates_exist == 'false'
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          
+          if [ "$ENVIRONMENT" == "prod" ]; then
+            DOMAIN="prod.lesaiglesbraves.online"
+          else
+            DOMAIN="dev.lesaiglesbraves.online"
+          fi
+          
+          echo "🔐 Generating self-signed certificate for $DOMAIN"
+          
+          # Créer le répertoire pour les certificats
+          mkdir -p certs
+          
+          # Générer la clé privée
+          openssl genrsa -out certs/tls.key 2048
+          
+          # Générer le certificat auto-signé
+          openssl req -new -x509 -sha256 -key certs/tls.key -out certs/tls.crt -days 365 \
+            -subj "/C=FR/ST=IDF/L=Paris/O=LesAiglesBraves/CN=$DOMAIN"
+          
+          echo "✅ Certificate generated successfully"
+
+      - name: Upload Certificates to Key Vault
+        if: steps.check-certs.outputs.certificates_exist == 'false'
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          KEY_VAULT_NAME="owncloudkv${ENVIRONMENT}"
+          
+          echo "📤 Uploading certificates to Key Vault: $KEY_VAULT_NAME"
+          
+          # Convertir le certificat en base64 pour Key Vault
+          CERT_CONTENT=$(cat certs/tls.crt | base64 -w 0)
+          KEY_CONTENT=$(cat certs/tls.key | base64 -w 0)
+          
+          # Upload certificate
+          az keyvault secret set \
+            --vault-name $KEY_VAULT_NAME \
+            --name tls-cert \
+            --value "$CERT_CONTENT" \
+            --content-type "application/x-pem-file"
+          
+          # Upload private key
+          az keyvault secret set \
+            --vault-name $KEY_VAULT_NAME \
+            --name tls-key \
+            --value "$KEY_CONTENT" \
+            --content-type "application/x-pem-file"
+          
+          echo "✅ Certificates uploaded successfully"
+          
+          # Nettoyer les fichiers locaux
+          rm -rf certs
+
+      - name: Certificate Summary
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "## 🔐 Certificate Status - $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.check-certs.outputs.certificates_exist }}" == "true" ]; then
+            echo "✅ Certificates already present in Key Vault" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🔐 New self-signed certificates generated and uploaded" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Déploiement Terraform
+  terraform:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: [set-environment, check-certificates]
+    # Seulement si pas une PR et branche develop ou main
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    environment: ${{ needs.set-environment.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ needs.set-environment.outputs.environment }}
+        run: |
+          echo "🔧 Initializing Terraform for ${{ needs.set-environment.outputs.environment }}..."
+          terraform init \
+            -backend-config="storage_account_name=tfstate${{ needs.set-environment.outputs.environment }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=owncloud.tfstate"
+
+      - name: Terraform Plan
+        working-directory: terraform/environments/${{ needs.set-environment.outputs.environment }}
+        run: |
+          echo "📋 Creating Terraform plan..."
+          terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/${{ needs.set-environment.outputs.environment }}
+        run: |
+          echo "🚀 Applying Terraform plan..."
+          terraform apply -auto-approve tfplan
+
+      - name: Get AKS Credentials
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "🔑 Getting AKS credentials for $ENVIRONMENT..."
+          az aks get-credentials \
+            --resource-group owncloud-rg-$ENVIRONMENT \
+            --name owncloud-aks-$ENVIRONMENT \
+            --overwrite-existing
+
+      - name: Infrastructure Summary
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "## 🏗️ Infrastructure Deployed - $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ AKS Cluster: owncloud-aks-$ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Resource Group: owncloud-rg-$ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Key Vault: owncloudkv$ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Storage Account: owncloudstorages$ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+
+  # Déploiement des applications
+  deploy-apps:
+    name: Deploy Applications
+    runs-on: ubuntu-latest
+    needs: [set-environment, terraform]
+    # Seulement si pas une PR et branche develop ou main
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    environment: ${{ needs.set-environment.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible
+        run: |
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          ansible-galaxy collection install kubernetes.core
+          ansible-galaxy collection install azure.azcollection
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          az aks get-credentials \
+            --resource-group owncloud-rg-$ENVIRONMENT \
+            --name owncloud-aks-$ENVIRONMENT \
+            --overwrite-existing
+
+      - name: Deploy Applications with Ansible
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "🚀 Deploying applications to $ENVIRONMENT..."
+          
+          ansible-playbook \
+            -i ansible/inventories/$ENVIRONMENT.yml \
+            ansible/deploy.yml \
+            -e "environment=$ENVIRONMENT"
+
+      - name: Wait for Deployments
+        run: |
+          echo "⏳ Waiting for all pods to be ready..."
+          kubectl wait --for=condition=ready pod --all -n owncloud --timeout=600s
+
+      - name: Get Service Information
+        id: service-info
+        run: |
+          echo "📊 Getting service information..."
+          
+          # Obtenir l'IP de l'Ingress
+          INGRESS_IP=$(kubectl get ingress -n owncloud owncloud-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "ingress_ip=$INGRESS_IP" >> $GITHUB_OUTPUT
+          
+          # Lister tous les pods
+          echo "### 📦 Deployed Pods" >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -n owncloud >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🌐 Services" >> $GITHUB_STEP_SUMMARY
+          kubectl get services -n owncloud >> $GITHUB_STEP_SUMMARY
+
+      - name: Deployment Summary
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          INGRESS_IP="${{ steps.service-info.outputs.ingress_ip }}"
+          
+          if [ "$ENVIRONMENT" == "prod" ]; then
+            DOMAIN="prod.lesaiglesbraves.online"
+          else
+            DOMAIN="dev.lesaiglesbraves.online"
+          fi
+          
+          echo "## 🎉 Deployment Successful - $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🌐 Access Information" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Domain**: https://$DOMAIN" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ingress IP**: $INGRESS_IP" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. Update DNS record to point $DOMAIN to $INGRESS_IP" >> $GITHUB_STEP_SUMMARY
+          echo "2. Access ownCloud at https://$DOMAIN" >> $GITHUB_STEP_SUMMARY
+          echo "3. Access Keycloak admin at https://$DOMAIN/auth" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Note**: Self-signed certificate in use. For production, configure Let's Encrypt." >> $GITHUB_STEP_SUMMARY
+
+  # Job de nettoyage en cas d'échec
+  cleanup-on-failure:
+    name: Cleanup on Failure
+    runs-on: ubuntu-latest
+    needs: [set-environment, terraform, deploy-apps]
+    if: failure() && github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    
+    steps:
+      - name: Failure Notification
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "## ❌ Deployment Failed - $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The deployment has failed. Please check the logs above for details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Troubleshooting Steps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check Terraform output for infrastructure errors" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify Azure credentials and permissions" >> $GITHUB_STEP_SUMMARY
+          echo "3. Check Ansible playbook logs for application deployment errors" >> $GITHUB_STEP_SUMMARY
+          echo "4. Review Kubernetes events: \`kubectl get events -n owncloud\`" >> $GITHUB_STEP_SUMMARY
