@@ -323,7 +323,7 @@ jobs:
           ansible-playbook \
             -i ansible/inventories/$ENVIRONMENT.yml \
             ansible/deploy.yml \
-            -e "environment=$ENVIRONMENT"
+            -e "target_env=$ENVIRONMENT"
 
       - name: Wait for Deployments
         run: |
