@@ -247,8 +247,14 @@ jobs:
         working-directory: terraform/environments/${{ needs.set-environment.outputs.environment }}
         run: |
           echo "🔧 Initializing Terraform for ${{ needs.set-environment.outputs.environment }}..."
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            SA_NAME="owncloudsastateprod"
+          else
+            SA_NAME="owncloudsastatedev"
+          fi
           terraform init \
-            -backend-config="storage_account_name=tfstate${{ needs.set-environment.outputs.environment }}" \
+            -backend-config="storage_account_name=$SA_NAME" \
             -backend-config="container_name=tfstate" \
             -backend-config="key=owncloud.tfstate"
 

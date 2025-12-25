@@ -36,25 +36,25 @@ az keyvault show --name owncloudkvprod
 ```bash
 # Dev
 az storage account create \
-  --name owncloudtfstatedev \
+  --name owncloudsastatedev \
   --resource-group owncloud-rg-dev \
   --location westeurope \
   --sku Standard_LRS
 
 az storage container create \
   --name tfstate \
-  --account-name owncloudtfstatedev
+  --account-name owncloudsastatedev
 
 # Prod
 az storage account create \
-  --name owncloudtfstateprod \
+  --name owncloudsastateprod \
   --resource-group owncloud-rg-prod \
   --location westeurope \
   --sku Standard_LRS
 
 az storage container create \
   --name tfstate \
-  --account-name owncloudtfstateprod
+  --account-name owncloudsastateprod
 ```
 
 ### Déploiement (1 clic)
