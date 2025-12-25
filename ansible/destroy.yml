@@ -1,6 +1,7 @@
 ---
 - name: Destroy ownCloud OCIS and Keycloak deployment
-  hosts: "{{ target_env }}"
+  hosts: localhost
+  connection: local
   gather_facts: false
   
   vars:
