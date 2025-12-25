@@ -1,6 +1,7 @@
 ---
 - name: Deploy ownCloud OCIS and Keycloak to AKS
-  hosts: "{{ target_env }}"
+  hosts: localhost
+  connection: local
   gather_facts: false
   
   vars:
