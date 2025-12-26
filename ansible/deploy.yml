@@ -109,31 +109,31 @@
       args:
         chdir: "{{ playbook_dir }}/.."
 
-    - name: Wait for Keycloak to be ready
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Pod
-        namespace: owncloud
-        label_selectors:
-          - app=keycloak
-        kubeconfig: "{{ kubeconfig_path }}"
-      register: keycloak_pods
-      until: keycloak_pods.resources | length > 0 and keycloak_pods.resources[0].status.phase == "Running"
-      retries: 15
-      delay: 30
+    # - name: Wait for Keycloak to be ready
+    #   kubernetes.core.k8s_info:
+    #     api_version: v1
+    #     kind: Pod
+    #     namespace: owncloud
+    #     label_selectors:
+    #       - app=keycloak
+    #     kubeconfig: "{{ kubeconfig_path }}"
+    #   register: keycloak_pods
+    #   until: keycloak_pods.resources | length > 0 and keycloak_pods.resources[0].status.phase == "Running"
+    #   retries: 15
+    #   delay: 30
 
-    - name: Wait for OCIS to be ready
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Pod
-        namespace: owncloud
-        label_selectors:
-          - app=ocis
-        kubeconfig: "{{ kubeconfig_path }}"
-      register: ocis_pods
-      until: ocis_pods.resources | length > 0 and ocis_pods.resources[0].status.phase == "Running"
-      retries: 15
-      delay: 30
+    # - name: Wait for OCIS to be ready
+    #   kubernetes.core.k8s_info:
+    #     api_version: v1
+    #     kind: Pod
+    #     namespace: owncloud
+    #     label_selectors:
+    #       - app=ocis
+    #     kubeconfig: "{{ kubeconfig_path }}"
+    #   register: ocis_pods
+    #   until: ocis_pods.resources | length > 0 and ocis_pods.resources[0].status.phase == "Running"
+    #   retries: 15
+    #   delay: 30
 
     - name: Get Ingress external IP
       kubernetes.core.k8s_info:
