@@ -19,7 +19,7 @@ configMapGenerator:
   - name: ocis-config
     literals:
       - ocis-url=https://OCIS_HOSTNAME
-      - oidc-issuer=https://KEYCLOAK_HOSTNAME/realms/owncloud
+      - oidc-issuer=https://OCIS_HOSTNAME/auth/realms/owncloud
       - db-host=POSTGRES_HOST
 
 secretGenerator:

@@ -6,6 +6,8 @@
   
   vars:
     kubeconfig_path: "{{ lookup('env', 'KUBECONFIG') }}"
+  vars_files:
+    - "{{ playbook_dir }}/inventories/{{ target_env }}.yml"
     
   tasks:
     - name: Install required Python packages
@@ -153,5 +155,5 @@
           - "Deployment completed successfully!"
           - "Ingress IP: {{ ingress_service.resources[0].status.loadBalancer.ingress[0].ip }}"
           - "Please configure your DNS to point to this IP address"
-          - "Keycloak URL: https://{{ keycloak_hostname }}"
+          - "Keycloak URL: https://{{ ocis_hostname }}/auth"
           - "OCIS URL: https://{{ ocis_hostname }}"
