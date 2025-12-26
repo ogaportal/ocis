@@ -5,7 +5,6 @@ namespace: owncloud
 
 resources:
   - namespace.yaml
-  - postgres.yaml
   - keycloak.yaml
   - ocis.yaml
   - ingress.yaml
@@ -15,16 +14,18 @@ configMapGenerator:
   - name: keycloak-config
     literals:
       - hostname=KEYCLOAK_HOSTNAME
+      - db-host=POSTGRES_HOST
   
   - name: ocis-config
     literals:
       - ocis-url=https://OCIS_HOSTNAME
       - oidc-issuer=https://KEYCLOAK_HOSTNAME/realms/owncloud
+      - db-host=POSTGRES_HOST
 
 secretGenerator:
   - name: postgres-secret
     literals:
-      - username=postgres
+      - username=POSTGRES_USER
       - password=POSTGRES_PASSWORD
   
   - name: keycloak-secret

@@ -23,7 +23,7 @@ spec:
         - name: KC_DB
           value: postgres
         - name: KC_DB_URL
-          value: jdbc:postgresql://postgres:5432/keycloak
+          value: jdbc:postgresql://POSTGRES_HOST:5432/keycloak
         - name: KC_DB_USERNAME
           valueFrom:
             secretKeyRef:

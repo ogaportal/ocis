@@ -45,9 +45,17 @@ configMapGenerator:
     behavior: merge
     literals:
       - hostname=dev.lesaiglesbraves.online
+      - db-host=owncloud-db-dev.postgres.database.azure.com
   
   - name: ocis-config
     behavior: merge
     literals:
       - ocis-url=https://dev.lesaiglesbraves.online
       - oidc-issuer=https://dev.lesaiglesbraves.online/realms/owncloud
+      - db-host=owncloud-db-dev.postgres.database.azure.com
+
+secretGenerator:
+  - name: postgres-secret
+    behavior: merge
+    literals:
+      - username=owncloudadmin
