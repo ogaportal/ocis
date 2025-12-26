@@ -9,24 +9,19 @@ namespace: owncloud
 patches:
   - target:
       kind: Ingress
-      name: keycloak-ingress
+      name: owncloud-ingress
     patch: |-
       - op: replace
         path: /spec/tls/0/hosts/0
         value: prod.lesaiglesbraves.online
       - op: replace
-        path: /spec/rules/0/host
-        value: prod.lesaiglesbraves.online
-  
-  - target:
-      kind: Ingress
-      name: ocis-ingress
-    patch: |-
-      - op: replace
-        path: /spec/tls/0/hosts/0
+        path: /spec/tls/0/hosts/1
         value: prod.lesaiglesbraves.online
       - op: replace
         path: /spec/rules/0/host
+        value: prod.lesaiglesbraves.online
+      - op: replace
+        path: /spec/rules/1/host
         value: prod.lesaiglesbraves.online
   
   - target:
