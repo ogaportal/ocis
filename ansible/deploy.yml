@@ -89,11 +89,12 @@
       when: csi_driver_check.resources | length == 0
 
     - name: Apply Kubernetes manifests with Kustomize
-      kubernetes.core.k8s:
-        state: present
-        src: "{{ playbook_dir }}/../k8s/overlays/{{ target_env }}"
-        kubeconfig: "{{ kubeconfig_path }}"
-        apply: true
+      ansible.builtin.command:
+        cmd: kubectl apply -k k8s/overlays/{{ target_env }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      args:
+        chdir: "{{ playbook_dir }}/.."
 
     - name: Wait for PostgreSQL to be ready
       kubernetes.core.k8s_info:
