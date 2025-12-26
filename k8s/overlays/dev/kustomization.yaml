@@ -25,6 +25,9 @@ patches:
       - op: replace
         path: /spec/parameters/keyvaultName
         value: owncloudkvdev
+      - op: replace
+        path: /spec/parameters/userAssignedIdentityID
+        value: KUBELET_CLIENT_ID
   
   - target:
       kind: SecretProviderClass
@@ -33,6 +36,9 @@ patches:
       - op: replace
         path: /spec/parameters/keyvaultName
         value: owncloudkvdev
+      - op: replace
+        path: /spec/parameters/userAssignedIdentityID
+        value: KUBELET_CLIENT_ID
 
 configMapGenerator:
   - name: keycloak-config
