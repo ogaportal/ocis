@@ -15,13 +15,7 @@ patches:
         path: /spec/tls/0/hosts/0
         value: prod.lesaiglesbraves.online
       - op: replace
-        path: /spec/tls/0/hosts/1
-        value: prod.lesaiglesbraves.online
-      - op: replace
         path: /spec/rules/0/host
-        value: prod.lesaiglesbraves.online
-      - op: replace
-        path: /spec/rules/1/host
         value: prod.lesaiglesbraves.online
   
   - target:
@@ -51,7 +45,7 @@ configMapGenerator:
     behavior: merge
     literals:
       - ocis-url=https://prod.lesaiglesbraves.online
-      - oidc-issuer=https://prod.lesaiglesbraves.online/realms/owncloud
+      - oidc-issuer=https://prod.lesaiglesbraves.online/auth/realms/owncloud
       - db-host=owncloud-db-prod.postgres.database.azure.com
 
 secretGenerator:
