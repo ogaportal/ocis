@@ -13,7 +13,7 @@ variable "kubernetes_version" {
 variable "node_count" {
   description = "Number of nodes in the AKS cluster"
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "vm_size" {
