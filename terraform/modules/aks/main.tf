@@ -22,8 +22,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
     type                        = "VirtualMachineScaleSets"
     enable_auto_scaling         = false
     temporary_name_for_rotation = "tempnp"
-    max_surge                   = 0
-    max_unavailable             = 1
+    
+    upgrade_settings {
+      max_surge = "0"
+    }
   }
 
   identity {
