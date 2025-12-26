@@ -88,6 +88,19 @@
               enabled: true
       when: csi_driver_check.resources | length == 0
 
+    - name: Clean up old Ingress resources
+      kubernetes.core.k8s:
+        state: absent
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: "{{ item }}"
+        namespace: owncloud
+        kubeconfig: "{{ kubeconfig_path }}"
+      loop:
+        - keycloak-ingress
+        - ocis-ingress
+      ignore_errors: true
+
     - name: Apply Kubernetes manifests with Kustomize
       ansible.builtin.command:
         cmd: kubectl apply -k k8s/overlays/{{ target_env }}
