@@ -109,19 +109,6 @@
       args:
         chdir: "{{ playbook_dir }}/.."
 
-    - name: Wait for PostgreSQL to be ready
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Pod
-        namespace: owncloud
-        label_selectors:
-          - app=postgres
-        kubeconfig: "{{ kubeconfig_path }}"
-      register: postgres_pods
-      until: postgres_pods.resources | length > 0 and postgres_pods.resources[0].status.phase == "Running"
-      retries: 10
-      delay: 30
-
     - name: Wait for Keycloak to be ready
       kubernetes.core.k8s_info:
         api_version: v1
