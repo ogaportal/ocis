@@ -82,11 +82,8 @@ resource "azurerm_postgresql_flexible_server" "postgres" {
   sku_name   = "B_Standard_B2ms"  # Burstable tier, larger for prod
   storage_mb = 65536              # 64 GB
   
-  backup_retention_days             = 30
-  geo_redundant_backup_enabled      = true
-  publicly_accessible              = false
-  ssl_enforcement_enabled           = true
-  ssl_minimum_tls_version_enforced  = "TLSEnforcementDisabled"
+  backup_retention_days        = 30
+  geo_redundant_backup_enabled = true
   
   tags = {
     Environment = "prod"
