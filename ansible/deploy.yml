@@ -17,6 +17,20 @@
         state: present
       delegate_to: localhost
 
+    - name: Add Helm repositories
+      kubernetes.core.helm_repository:
+        name: "{{ item.name }}"
+        repo_url: "{{ item.url }}"
+        state: present
+      loop:
+        - name: ingress-nginx
+          url: https://kubernetes.github.io/ingress-nginx
+        - name: jetstack
+          url: https://charts.jetstack.io
+        - name: csi-secrets-store-provider-azure
+          url: https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+      delegate_to: localhost
+
     - name: Install NGINX Ingress Controller
       kubernetes.core.helm:
         name: ingress-nginx
