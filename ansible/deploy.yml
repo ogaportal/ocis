@@ -67,6 +67,15 @@
       retries: 10
       delay: 30
 
+    - name: Check if CSI Driver already exists
+      kubernetes.core.k8s_info:
+        api_version: storage.k8s.io/v1
+        kind: CSIDriver
+        name: secrets-store.csi.k8s.io
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: csi_driver_check
+      ignore_errors: true
+
     - name: Install Azure Key Vault CSI Driver
       kubernetes.core.helm:
         name: csi-secrets-store-provider-azure
@@ -77,6 +86,7 @@
           secrets-store-csi-driver:
             syncSecret:
               enabled: true
+      when: csi_driver_check.resources | length == 0
 
     - name: Apply Kubernetes manifests with Kustomize
       kubernetes.core.k8s:
