@@ -24,7 +24,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
     temporary_name_for_rotation = "tempnp"
     
     upgrade_settings {
-      max_surge = "0"
+      max_surge = "1"
     }
   }
 
