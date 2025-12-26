@@ -109,39 +109,25 @@
       register: kubelet_client_id
       changed_when: false
 
-    - name: Get tenant ID
-      ansible.builtin.command:
-        cmd: az account show --query tenantId -o tsv
-      register: tenant_id
-      changed_when: false
-
-    - name: Create temporary Kustomize directory
-      ansible.builtin.tempfile:
-        state: directory
-      register: temp_kustomize_dir
-
-    - name: Copy Kustomize overlay to temp directory
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../k8s/overlays/{{ target_env }}/"
-        dest: "{{ temp_kustomize_dir.path }}/"
-        remote_src: false
-
     - name: Replace KUBELET_CLIENT_ID placeholder in kustomization
       ansible.builtin.replace:
-        path: "{{ temp_kustomize_dir.path }}/kustomization.yaml"
+        path: "{{ playbook_dir }}/../k8s/overlays/{{ target_env }}/kustomization.yaml"
         regexp: 'KUBELET_CLIENT_ID'
         replace: "{{ kubelet_client_id.stdout }}"
 
     - name: Apply Kubernetes manifests with Kustomize
       ansible.builtin.command:
-        cmd: kubectl apply -k {{ temp_kustomize_dir.path }}
+        cmd: kubectl apply -k k8s/overlays/{{ target_env }}
       environment:
         KUBECONFIG: "{{ kubeconfig_path }}"
+      args:
+        chdir: "{{ playbook_dir }}/.."
 
-    - name: Clean up temporary directory
-      ansible.builtin.file:
-        path: "{{ temp_kustomize_dir.path }}"
-        state: absent
+    - name: Restore kustomization.yaml placeholder
+      ansible.builtin.replace:
+        path: "{{ playbook_dir }}/../k8s/overlays/{{ target_env }}/kustomization.yaml"
+        regexp: "{{ kubelet_client_id.stdout }}"
+        replace: 'KUBELET_CLIENT_ID'
 
     # - name: Wait for Keycloak to be ready
     #   kubernetes.core.k8s_info:
