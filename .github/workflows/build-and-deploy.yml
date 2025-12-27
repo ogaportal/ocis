@@ -136,11 +136,27 @@ jobs:
           
           echo "🔍 Checking certificates in Key Vault: $KEY_VAULT_NAME"
           
-          # Vérifier si les certificats existent (keycloak-tls-cert et ocis-tls-cert)
-          KEYCLOAK_CERT=$(az keyvault certificate list --vault-name $KEY_VAULT_NAME --query "length([?name=='keycloak-tls-cert'])" -o tsv 2>/dev/null || echo "0")
-          OCIS_CERT=$(az keyvault certificate list --vault-name $KEY_VAULT_NAME --query "length([?name=='ocis-tls-cert'])" -o tsv 2>/dev/null || echo "0")
-          KEYCLOAK_KEY=$(az keyvault secret list --vault-name $KEY_VAULT_NAME --query "length([?name=='keycloak-tls-key'])" -o tsv 2>/dev/null || echo "0")
-          OCIS_KEY=$(az keyvault secret list --vault-name $KEY_VAULT_NAME --query "length([?name=='ocis-tls-key'])" -o tsv 2>/dev/null || echo "0")
+          # Vérifier si les certificats existent en utilisant az keyvault certificate show
+          KEYCLOAK_CERT=0
+          OCIS_CERT=0
+          KEYCLOAK_KEY=0
+          OCIS_KEY=0
+          
+          if az keyvault certificate show --vault-name $KEY_VAULT_NAME --name keycloak-tls-cert &>/dev/null; then
+            KEYCLOAK_CERT=1
+          fi
+          
+          if az keyvault certificate show --vault-name $KEY_VAULT_NAME --name ocis-tls-cert &>/dev/null; then
+            OCIS_CERT=1
+          fi
+          
+          if az keyvault secret show --vault-name $KEY_VAULT_NAME --name keycloak-tls-key &>/dev/null; then
+            KEYCLOAK_KEY=1
+          fi
+          
+          if az keyvault secret show --vault-name $KEY_VAULT_NAME --name ocis-tls-key &>/dev/null; then
+            OCIS_KEY=1
+          fi
           
           if [ "$KEYCLOAK_CERT" -gt 0 ] && [ "$OCIS_CERT" -gt 0 ] && [ "$KEYCLOAK_KEY" -gt 0 ] && [ "$OCIS_KEY" -gt 0 ]; then
             echo "✅ All certificates already exist in Key Vault"
