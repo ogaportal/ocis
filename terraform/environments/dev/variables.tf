@@ -4,6 +4,7 @@ variable "location" {
   default     = "westeurope"
 }
 
+
 variable "kubernetes_version" {
   description = "Kubernetes version for AKS"
   type        = string
