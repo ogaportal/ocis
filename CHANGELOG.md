@@ -2,6 +2,50 @@
 
 Toutes les modifications notables de ce projet seront documentées dans ce fichier.
 
+## [1.2.0] - 2025-12-27
+
+### 🔧 Modifié
+
+#### Résolution du problème de timeout cert-manager
+- **Suppression de cert-manager** : cert-manager n'est plus utilisé pour générer les certificats
+  - Suppression de l'installation de cert-manager dans `ansible/deploy.yml`
+  - Suppression du repository Helm jetstack
+  - Suppression des étapes d'attente de génération de certificats (qui causaient des timeouts)
+
+- **Nouvelle approche avec Azure Key Vault + CSI Driver**
+  - Les certificats sont maintenant générés localement via `scripts/manage-certificates.ps1`
+  - Upload automatique vers Azure Key Vault
+  - Synchronisation automatique dans Kubernetes via le CSI Driver
+  - Création de `k8s/base/certificates-keyvault.yaml` avec SecretProviderClass
+  - Sauvegarde de l'ancienne config dans `k8s/base/certificates.yaml.bak`
+
+- **Mise à jour du déploiement Ansible**
+  - Nouvelle étape : "Wait for CSI SecretProviderClass to sync certificates from Key Vault"
+  - Plus de dépendance sur cert-manager
+  - Déploiement plus rapide et fiable
+
+- **Mise à jour des configurations Kustomize**
+  - Modification de `k8s/base/kustomization.yaml` pour utiliser `certificates-keyvault.yaml`
+  - Simplification des patches dans `k8s/overlays/dev/kustomization.yaml`
+
+### ✨ Ajouté
+
+#### Documentation
+- **`docs/certificate-deployment-guide.md`** : Guide complet pour générer et déployer les certificats
+  - Procédure pas à pas
+  - Vérifications post-déploiement
+  - Section troubleshooting
+  - Guide de renouvellement
+
+- **Référence dans README.md** : Ajout du lien vers le nouveau guide
+
+### ✅ Avantages de cette version
+- ✅ Plus de timeout lors du déploiement
+- ✅ Contrôle total sur les certificats
+- ✅ Déploiement plus rapide
+- ✅ Meilleure intégration avec Azure Key Vault
+- ✅ Compatible avec le workflow GitHub Actions existant
+
 ## [1.1.0] - 2025-12-25
 
 ### ✨ Ajouté

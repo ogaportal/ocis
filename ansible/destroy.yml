@@ -29,12 +29,8 @@
         state: absent
         kubeconfig: "{{ kubeconfig_path }}"
 
-    - name: Uninstall cert-manager
-      kubernetes.core.helm:
-        name: cert-manager
-        release_namespace: cert-manager
-        state: absent
-        kubeconfig: "{{ kubeconfig_path }}"
+    # cert-manager n'est plus utilisé depuis la version 1.2.0
+    # Les certificats sont gérés via Azure Key Vault et le CSI Driver
 
     - name: Uninstall Azure Key Vault CSI Driver
       kubernetes.core.helm:

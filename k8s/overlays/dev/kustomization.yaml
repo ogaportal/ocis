@@ -20,25 +20,14 @@ patches:
   
   - target:
       kind: SecretProviderClass
-      name: keycloak-tls
+      name: ocis-keyvault-certs
     patch: |-
       - op: replace
         path: /spec/parameters/keyvaultName
         value: owncloudkvdev
       - op: replace
-        path: /spec/parameters/userAssignedIdentityID
-        value: KUBELET_CLIENT_ID
-  
-  - target:
-      kind: SecretProviderClass
-      name: ocis-tls
-    patch: |-
-      - op: replace
-        path: /spec/parameters/keyvaultName
-        value: owncloudkvdev
-      - op: replace
-        path: /spec/parameters/userAssignedIdentityID
-        value: KUBELET_CLIENT_ID
+        path: /spec/parameters/tenantId
+        value: TENANT_ID
 
 configMapGenerator:
   - name: keycloak-config
