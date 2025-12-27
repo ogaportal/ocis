@@ -111,16 +111,27 @@
       args:
         chdir: "{{ playbook_dir }}/.."
 
+    - name: Wait for cert-manager ClusterIssuer to be ready
+      kubernetes.core.k8s_info:
+        api_version: cert-manager.io/v1
+        kind: ClusterIssuer
+        name: letsencrypt-prod
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: issuer_info
+      until: issuer_info.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0
+      retries: 20
+      delay: 30
+
     - name: Wait for cert-manager to generate certificates
       kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Secret
-        name: "{{ item }}"
+        api_version: cert-manager.io/v1
+        kind: Certificate
+        name: "{{ item }}-cert"
         namespace: owncloud
         kubeconfig: "{{ kubeconfig_path }}"
-      register: cert_secret
-      until: cert_secret.resources | length > 0
-      retries: 10
+      register: cert_info
+      until: cert_info.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0
+      retries: 30
       delay: 30
       loop:
         - ocis-tls
