@@ -89,11 +89,8 @@ spec:
           mountPath: /etc/ocis/config
       volumes:
       - name: tls
-        csi:
-          driver: secrets-store.csi.k8s.io
-          readOnly: true
-          volumeAttributes:
-            secretProviderClass: "ocis-tls"
+        secret:
+          secretName: ocis-tls
       - name: config
         emptyDir: {}
 ---

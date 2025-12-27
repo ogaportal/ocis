@@ -103,18 +103,6 @@
         - ocis-ingress
       ignore_errors: true
 
-    - name: Get AKS kubelet identity client ID
-      ansible.builtin.command:
-        cmd: az aks show --name {{ cluster_name }} --resource-group {{ resource_group }} --query identityProfile.kubeletidentity.clientId -o tsv
-      register: kubelet_client_id
-      changed_when: false
-
-    - name: Replace KUBELET_CLIENT_ID placeholder in kustomization
-      ansible.builtin.replace:
-        path: "{{ playbook_dir }}/../k8s/overlays/{{ target_env }}/kustomization.yaml"
-        regexp: 'KUBELET_CLIENT_ID'
-        replace: "{{ kubelet_client_id.stdout }}"
-
     - name: Apply Kubernetes manifests with Kustomize
       ansible.builtin.command:
         cmd: kubectl apply -k k8s/overlays/{{ target_env }}
@@ -123,11 +111,20 @@
       args:
         chdir: "{{ playbook_dir }}/.."
 
-    - name: Restore kustomization.yaml placeholder
-      ansible.builtin.replace:
-        path: "{{ playbook_dir }}/../k8s/overlays/{{ target_env }}/kustomization.yaml"
-        regexp: "{{ kubelet_client_id.stdout }}"
-        replace: 'KUBELET_CLIENT_ID'
+    - name: Wait for cert-manager to generate certificates
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: "{{ item }}"
+        namespace: owncloud
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: cert_secret
+      until: cert_secret.resources | length > 0
+      retries: 10
+      delay: 30
+      loop:
+        - ocis-tls
+        - keycloak-tls
 
     # - name: Wait for Keycloak to be ready
     #   kubernetes.core.k8s_info:

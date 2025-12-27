@@ -89,11 +89,8 @@ spec:
           readOnly: true
       volumes:
       - name: tls
-        csi:
-          driver: secrets-store.csi.k8s.io
-          readOnly: true
-          volumeAttributes:
-            secretProviderClass: "keycloak-tls"
+        secret:
+          secretName: keycloak-tls
 ---
 apiVersion: v1
 kind: Service
