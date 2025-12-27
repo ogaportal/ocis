@@ -27,8 +27,6 @@
       loop:
         - name: ingress-nginx
           url: https://kubernetes.github.io/ingress-nginx
-        - name: jetstack
-          url: https://charts.jetstack.io
         - name: csi-secrets-store-provider-azure
           url: https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
       delegate_to: localhost
@@ -46,28 +44,8 @@
               annotations:
                 service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
 
-    - name: Install cert-manager
-      kubernetes.core.helm:
-        name: cert-manager
-        chart_ref: jetstack/cert-manager
-        release_namespace: cert-manager
-        create_namespace: true
-        kubeconfig: "{{ kubeconfig_path }}"
-        values:
-          installCRDs: true
-
-    - name: Wait for cert-manager to be ready
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Pod
-        namespace: cert-manager
-        label_selectors:
-          - app.kubernetes.io/name=cert-manager
-        kubeconfig: "{{ kubeconfig_path }}"
-      register: cert_manager_pods
-      until: cert_manager_pods.resources | length > 0 and cert_manager_pods.resources[0].status.phase == "Running"
-      retries: 10
-      delay: 30
+    # cert-manager n'est plus utilisé - les certificats sont créés localement
+    # et chargés dans Azure Key Vault, puis synchronisés via CSI Driver
 
     - name: Check if CSI Driver already exists
       kubernetes.core.k8s_info:
@@ -111,28 +89,17 @@
       args:
         chdir: "{{ playbook_dir }}/.."
 
-    - name: Wait for cert-manager ClusterIssuer to be ready
+    - name: Wait for CSI SecretProviderClass to sync certificates from Key Vault
       kubernetes.core.k8s_info:
-        api_version: cert-manager.io/v1
-        kind: ClusterIssuer
-        name: letsencrypt-prod
-        kubeconfig: "{{ kubeconfig_path }}"
-      register: issuer_info
-      until: issuer_info.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0
-      retries: 20
-      delay: 30
-
-    - name: Wait for cert-manager to generate certificates
-      kubernetes.core.k8s_info:
-        api_version: cert-manager.io/v1
-        kind: Certificate
-        name: "{{ item }}-cert"
+        api_version: v1
+        kind: Secret
+        name: "{{ item }}"
         namespace: owncloud
         kubeconfig: "{{ kubeconfig_path }}"
-      register: cert_info
-      until: cert_info.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0
-      retries: 30
-      delay: 30
+      register: cert_secret_info
+      until: cert_secret_info.resources | length > 0
+      retries: 15
+      delay: 20
       loop:
         - ocis-tls
         - keycloak-tls
