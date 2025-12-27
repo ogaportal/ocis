@@ -27,7 +27,10 @@ patches:
         value: owncloudkvdev
       - op: replace
         path: /spec/parameters/tenantId
-        value: TENANT_ID
+        value: adb4b793-234b-4db7-8a27-1eb5a79637e2
+      - op: replace
+        path: /spec/parameters/userAssignedIdentityID
+        value: 15e0ba3e-2f37-4612-985f-fd8525b62b83
 
 configMapGenerator:
   - name: keycloak-config
