@@ -381,6 +381,22 @@ jobs:
             --name owncloud-aks-$ENVIRONMENT \
             --overwrite-existing
 
+      - name: Clean up old resources
+        run: |
+          echo "🧹 Cleaning up old SecretProviderClass and secrets..."
+          
+          # Supprimer les anciennes SecretProviderClass (sauf ocis-keyvault-certs)
+          kubectl delete secretproviderclass keycloak-tls -n owncloud --ignore-not-found=true
+          kubectl delete secretproviderclass ocis-tls -n owncloud --ignore-not-found=true
+          
+          # Supprimer le pod de sync s'il existe déjà
+          kubectl delete pod secrets-sync-pod -n owncloud --ignore-not-found=true
+          
+          # Attendre que les ressources soient supprimées
+          sleep 10
+          
+          echo "✅ Cleanup completed"
+
       - name: Deploy Applications with Ansible
         run: |
           ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
@@ -393,41 +409,100 @@ jobs:
 
       - name: Wait for Deployments
         run: |
-          echo "⏳ Waiting for all pods to be ready..."
+          echo "⏳ Waiting for secrets sync and applications to be ready..."
           
           # Afficher l'état actuel
-          echo "Current pods status:"
+          echo ""
+          echo "=== Current pods status ==="
           kubectl get pods -n owncloud
           
           echo ""
-          echo "Checking secrets..."
+          echo "=== Checking secrets ==="
           kubectl get secrets -n owncloud
           
           echo ""
-          echo "Checking SecretProviderClass..."
+          echo "=== Checking SecretProviderClass ==="
           kubectl get secretproviderclass -n owncloud
           
-          # Attendre avec un timeout plus long
+          # Vérifier si le secrets-sync-pod existe et diagnostiquer
           echo ""
-          echo "Waiting for pods to be ready (timeout: 10 minutes)..."
-          kubectl wait --for=condition=ready pod --all -n owncloud --timeout=600s || true
+          echo "=== Diagnosing secrets-sync-pod ==="
+          if kubectl get pod secrets-sync-pod -n owncloud &>/dev/null; then
+            echo "Pod exists, checking status..."
+            kubectl describe pod secrets-sync-pod -n owncloud | grep -A 20 "Events:"
+            
+            # Si le pod est en erreur, afficher les logs
+            POD_STATUS=$(kubectl get pod secrets-sync-pod -n owncloud -o jsonpath='{.status.phase}')
+            echo "Pod status: $POD_STATUS"
+            
+            if [ "$POD_STATUS" != "Running" ]; then
+              echo ""
+              echo "⚠️ secrets-sync-pod is not running. Recent events:"
+              kubectl get events -n owncloud --field-selector involvedObject.name=secrets-sync-pod --sort-by='.lastTimestamp'
+            fi
+          else
+            echo "⚠️ secrets-sync-pod does not exist!"
+          fi
           
-          # Afficher les pods qui ne sont pas prêts
+          # Attendre que les secrets TLS soient créés (max 5 minutes)
           echo ""
-          echo "Final pod status:"
+          echo "=== Waiting for TLS secrets to be created ==="
+          TIMEOUT=300
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            if kubectl get secret ocis-tls -n owncloud &>/dev/null && kubectl get secret keycloak-tls -n owncloud &>/dev/null; then
+              echo "✅ TLS secrets are ready!"
+              break
+            fi
+            echo "Waiting for secrets... (${ELAPSED}s/${TIMEOUT}s)"
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+          
+          if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "❌ Timeout waiting for TLS secrets!"
+            echo "Checking CSI driver logs..."
+            kubectl logs -n kube-system -l app=csi-secrets-store-provider-azure --tail=50 || echo "Could not get CSI driver logs"
+            exit 1
+          fi
+          
+          # Maintenant attendre que les applications soient prêtes
+          echo ""
+          echo "=== Waiting for application pods (timeout: 10 minutes) ==="
+          kubectl wait --for=condition=ready pod -l app=postgres -n owncloud --timeout=600s || echo "⚠️ Postgres timeout"
+          kubectl wait --for=condition=ready pod -l app=keycloak -n owncloud --timeout=600s || echo "⚠️ Keycloak timeout"
+          kubectl wait --for=condition=ready pod -l app=ocis -n owncloud --timeout=600s || echo "⚠️ OCIS timeout"
+          
+          # Afficher le statut final
+          echo ""
+          echo "=== Final pod status ==="
           kubectl get pods -n owncloud
           
-          # Afficher les événements pour debug
+          # Afficher les logs des pods en erreur
           echo ""
-          echo "Recent events:"
-          kubectl get events -n owncloud --sort-by='.lastTimestamp' | tail -20
+          echo "=== Checking for pod errors ==="
+          FAILED_PODS=$(kubectl get pods -n owncloud --field-selector=status.phase!=Running,status.phase!=Succeeded -o name 2>/dev/null || echo "")
           
-          # Vérifier si tous les pods sont ready
-          NOT_READY=$(kubectl get pods -n owncloud --field-selector=status.phase!=Running -o name | wc -l)
-          if [ $NOT_READY -gt 0 ]; then
+          if [ -n "$FAILED_PODS" ]; then
+            echo "⚠️ Some pods are not running:"
+            echo "$FAILED_PODS"
+            
+            for POD in $FAILED_PODS; do
+              POD_NAME=$(echo $POD | cut -d'/' -f2)
+              if [[ ! "$POD_NAME" =~ "secrets-sync-pod" ]]; then
+                echo ""
+                echo "--- Logs for $POD_NAME ---"
+                kubectl logs $POD_NAME -n owncloud --tail=50 || echo "Could not get logs"
+              fi
+            done
+            
             echo ""
-            echo "⚠️ Warning: Some pods are not ready. Showing details:"
-            kubectl describe pods -n owncloud | grep -A 10 "Events:"
+            echo "--- Recent events ---"
+            kubectl get events -n owncloud --sort-by='.lastTimestamp' | tail -30
+          fi
+          
+          echo ""
+          echo "✅ Deployment check completed"
             exit 1
           fi
           
