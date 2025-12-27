@@ -55,6 +55,13 @@ resource "azurerm_role_assignment" "aks_keyvault" {
   scope                = var.keyvault_id
 }
 
+# Grant AKS access to Key Vault Certificates
+resource "azurerm_role_assignment" "aks_keyvault_certs" {
+  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  role_definition_name = "Key Vault Certificates User"
+  scope                = var.keyvault_id
+}
+
 # Grant AKS access to Storage Account
 resource "azurerm_role_assignment" "aks_storage" {
   principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
