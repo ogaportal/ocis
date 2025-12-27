@@ -8,7 +8,7 @@ resources:
   - keycloak.yaml
   - ocis.yaml
   - ingress.yaml
-  - secret-provider-class.yaml
+  - certificates.yaml
 
 configMapGenerator:
   - name: keycloak-config
