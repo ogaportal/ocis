@@ -98,6 +98,36 @@ spec:
             secretKeyRef:
               name: ocis-secret
               key: admin-password
+        - name: OCIS_ADMIN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-email
+              optional: true
+        - name: IDM_CREATE_DEMO_USERS
+          value: "false"
+        - name: GRAPH_USERNAME_MATCH
+          value: "none"
+        - name: GRAPH_ASSIGN_DEFAULT_USER_ROLE
+          value: "false"
+        - name: OCIS_ADD_RUN_SERVICES
+          value: "idm"
+        - name: GRAPH_APPLICATION_ID
+          value: "9b4960da-aa0f-4c02-90fc-000000000000"
+        - name: GRAPH_LDAP_BIND_DN
+          value: "uid=libregraph,ou=sysusers,o=libregraph-idm"
+        - name: GRAPH_LDAP_BIND_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        - name: GRAPH_LDAP_SERVER_WRITE_ENABLED
+          value: "true"
+        - name: IDM_SERVICE_USER_PASSWORDS
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
         - name: IDM_SVC_PASSWORD
           valueFrom:
             secretKeyRef:
