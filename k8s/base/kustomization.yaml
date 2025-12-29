@@ -5,6 +5,7 @@ namespace: owncloud
 
 resources:
   - namespace.yaml
+  - postgres.yaml
   - keycloak.yaml
   - ocis.yaml
   - ingress.yaml
@@ -19,7 +20,6 @@ configMapGenerator:
   - name: ocis-config
     literals:
       - ocis-url=https://OCIS_HOSTNAME
-      - oidc-issuer=https://OCIS_HOSTNAME/auth/realms/owncloud
       - db-host=POSTGRES_HOST
 
 secretGenerator:
@@ -39,6 +39,10 @@ secretGenerator:
       - admin-password=OCIS_ADMIN_PASSWORD
       - oidc-client-id=ocis
       - oidc-client-secret=OIDC_CLIENT_SECRET
+      - jwt-secret=OCIS_JWT_SECRET
+      - transfer-secret=OCIS_TRANSFER_SECRET
+      - machine-auth-api-key=OCIS_MACHINE_AUTH_API_KEY
+      - system-user-api-key=OCIS_SYSTEM_USER_API_KEY
   
   - name: azure-storage-secret
     literals:

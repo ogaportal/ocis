@@ -407,6 +407,33 @@ jobs:
             ansible/deploy.yml \
             -e "target_env=$ENVIRONMENT"
 
+      - name: Generate and Set Application Secrets
+        run: |
+          echo "🔐 Generating random secrets for applications..."
+          
+          # Générer des secrets aléatoires
+          JWT_SECRET=$(openssl rand -base64 32)
+          OCIS_ADMIN_PASSWORD=$(openssl rand -base64 24)
+          KEYCLOAK_ADMIN_PASSWORD=$(openssl rand -base64 24)
+          OIDC_CLIENT_SECRET=$(openssl rand -base64 32)
+          
+          # Patcher le secret ocis-secret
+          kubectl patch secret ocis-secret -n owncloud --type='json' -p='[
+            {"op": "replace", "path": "/data/admin-password", "value": "'$(echo -n "$OCIS_ADMIN_PASSWORD" | base64 -w0)'"},
+            {"op": "replace", "path": "/data/oidc-client-secret", "value": "'$(echo -n "$OIDC_CLIENT_SECRET" | base64 -w0)'"},
+            {"op": "replace", "path": "/data/jwt-secret", "value": "'$(echo -n "$JWT_SECRET" | base64 -w0)'"}
+          ]'
+          
+          # Patcher le secret keycloak-secret
+          kubectl patch secret keycloak-secret -n owncloud --type='json' -p='[
+            {"op": "replace", "path": "/data/admin-password", "value": "'$(echo -n "$KEYCLOAK_ADMIN_PASSWORD" | base64 -w0)'"}
+          ]'
+          
+          echo "✅ Secrets generated and applied"
+          echo "⚠️ Save these credentials securely:"
+          echo "- OCIS Admin Password: $OCIS_ADMIN_PASSWORD"
+          echo "- Keycloak Admin Password: $KEYCLOAK_ADMIN_PASSWORD"
+
       - name: Wait for Deployments
         run: |
           echo "⏳ Waiting for secrets sync and applications to be ready..."
