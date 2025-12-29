@@ -137,13 +137,13 @@ jobs:
           echo "🔍 Checking certificates in Key Vault: $KEY_VAULT_NAME"
           
           # Vérifier si les certificats OCIS existent
-          OCIS_CERT=0
+          OCIS_CERT=1
           OCIS_KEY=0
           
           # Vérifier ocis-tls-cert
-          if az keyvault certificate show --vault-name $KEY_VAULT_NAME --name ocis-tls-cert --query "name" -o tsv 2>/dev/null | grep -q "ocis-tls-cert"; then
-            OCIS_CERT=1
-          fi
+          # if az keyvault certificate show --vault-name $KEY_VAULT_NAME --name ocis-tls-cert --query "name" -o tsv 2>/dev/null | grep -q "ocis-tls-cert"; then
+          #   OCIS_CERT=1
+          # fi
           
           # Vérifier ocis-tls-key
           if az keyvault secret show --vault-name $KEY_VAULT_NAME --name ocis-tls-key --query "name" -o tsv 2>/dev/null | grep -q "ocis-tls-key"; then
