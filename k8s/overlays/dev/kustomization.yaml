@@ -43,3 +43,4 @@ secretGenerator:
     behavior: merge
     literals:
       - admin-password=5T3phane
+      - admin-email=stephane.nzali@gmail.com

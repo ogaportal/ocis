@@ -43,3 +43,4 @@ secretGenerator:
     behavior: merge
     literals:
       - admin-password=PROD_ADMIN_PASSWORD_PLACEHOLDER
+      - admin-email=stephane.nzali@gmail.com
