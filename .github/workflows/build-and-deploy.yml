@@ -497,6 +497,180 @@ jobs:
           echo "### 🌐 Services" >> $GITHUB_STEP_SUMMARY
           kubectl get services -n owncloud >> $GITHUB_STEP_SUMMARY
 
+      - name: Check Let's Encrypt Certificate
+        id: check-letsencrypt
+        run: |
+          echo "🔍 Checking Let's Encrypt certificate status..."
+          
+          # Vérifier si le certificat existe
+          if kubectl get certificate ocis-tls -n owncloud &>/dev/null; then
+            # Le certificat existe, vérifier son statut
+            CERT_READY=$(kubectl get certificate ocis-tls -n owncloud -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+            
+            if [ "$CERT_READY" == "True" ]; then
+              # Certificat valide, vérifier la date d'expiration
+              NOT_AFTER=$(kubectl get certificate ocis-tls -n owncloud -o jsonpath='{.status.notAfter}')
+              EXPIRY_DATE=$(date -d "$NOT_AFTER" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$NOT_AFTER" +%s 2>/dev/null || echo "0")
+              CURRENT_DATE=$(date +%s)
+              DAYS_UNTIL_EXPIRY=$(( ($EXPIRY_DATE - $CURRENT_DATE) / 86400 ))
+              
+              echo "✅ Certificate exists and is valid"
+              echo "📅 Expires: $NOT_AFTER ($DAYS_UNTIL_EXPIRY days remaining)"
+              
+              # Ne recréer que si moins de 30 jours avant expiration
+              if [ $DAYS_UNTIL_EXPIRY -lt 30 ]; then
+                echo "⚠️ Certificate expires in less than 30 days, will renew"
+                echo "needs_renewal=true" >> $GITHUB_OUTPUT
+              else
+                echo "✅ Certificate is valid for $DAYS_UNTIL_EXPIRY days, no action needed"
+                echo "needs_renewal=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "⚠️ Certificate exists but is not ready, will recreate"
+              echo "needs_renewal=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "ℹ️ No Let's Encrypt certificate found, will create one"
+            echo "needs_renewal=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install cert-manager (if needed)
+        if: steps.check-letsencrypt.outputs.needs_renewal == 'true'
+        run: |
+          echo "📦 Checking if cert-manager is installed..."
+          
+          if ! kubectl get namespace cert-manager &>/dev/null; then
+            echo "Installing cert-manager..."
+            kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.0/cert-manager.yaml
+            
+            echo "⏳ Waiting for cert-manager to be ready..."
+            kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=cert-manager -n cert-manager --timeout=120s
+            echo "✅ cert-manager installed successfully"
+          else
+            echo "✅ cert-manager is already installed"
+          fi
+
+      - name: Configure Let's Encrypt Issuer
+        if: steps.check-letsencrypt.outputs.needs_renewal == 'true'
+        run: |
+          echo "🔧 Configuring Let's Encrypt ClusterIssuer..."
+          
+          kubectl apply -f - <<EOF
+          apiVersion: cert-manager.io/v1
+          kind: ClusterIssuer
+          metadata:
+            name: letsencrypt-prod
+          spec:
+            acme:
+              server: https://acme-v02.api.letsencrypt.org/directory
+              email: stephane.nzali@gmail.com
+              privateKeySecretRef:
+                name: letsencrypt-prod
+              solvers:
+              - http01:
+                  ingress:
+                    class: nginx
+          EOF
+          
+          echo "✅ ClusterIssuer configured"
+
+      - name: Request Let's Encrypt Certificate
+        if: steps.check-letsencrypt.outputs.needs_renewal == 'true'
+        run: |
+          echo "🔐 Requesting new Let's Encrypt certificate..."
+          
+          # Supprimer l'ancien certificat si existant
+          kubectl delete certificate ocis-tls -n owncloud --ignore-not-found=true
+          kubectl delete secret ocis-tls -n owncloud --ignore-not-found=true
+          
+          echo "⏳ Waiting for certificate to be issued (timeout: 5 minutes)..."
+          
+          # Attendre que le certificat soit créé et devienne ready
+          TIMEOUT=300
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            if kubectl get certificate ocis-tls -n owncloud &>/dev/null; then
+              CERT_READY=$(kubectl get certificate ocis-tls -n owncloud -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "False")
+              
+              if [ "$CERT_READY" == "True" ]; then
+                echo "✅ Certificate issued successfully!"
+                
+                # Afficher les détails
+                NOT_AFTER=$(kubectl get certificate ocis-tls -n owncloud -o jsonpath='{.status.notAfter}')
+                echo "📅 Certificate valid until: $NOT_AFTER"
+                
+                # Vérifier les challenges s'il y en a
+                CHALLENGES=$(kubectl get challenges -n owncloud -o name 2>/dev/null || echo "")
+                if [ -n "$CHALLENGES" ]; then
+                  echo ""
+                  echo "=== ACME Challenges ==="
+                  kubectl get challenges -n owncloud
+                fi
+                
+                break
+              fi
+            fi
+            
+            echo "Waiting for certificate... (${ELAPSED}s/${TIMEOUT}s)"
+            
+            # Afficher l'état des challenges pour le debug
+            if [ $((ELAPSED % 30)) -eq 0 ]; then
+              echo ""
+              echo "=== Current certificate status ==="
+              kubectl describe certificate ocis-tls -n owncloud 2>/dev/null | grep -A 5 "Status:" || echo "Certificate not created yet"
+              
+              echo ""
+              echo "=== ACME Challenges ==="
+              kubectl get challenges -n owncloud 2>/dev/null || echo "No challenges found"
+            fi
+            
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+          
+          if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "❌ Timeout waiting for certificate!"
+            echo ""
+            echo "=== Certificate Details ==="
+            kubectl describe certificate ocis-tls -n owncloud || echo "Certificate not found"
+            
+            echo ""
+            echo "=== Certificate Request Details ==="
+            kubectl describe certificaterequest -n owncloud || echo "No certificate requests"
+            
+            echo ""
+            echo "=== Challenge Details ==="
+            kubectl describe challenges -n owncloud || echo "No challenges"
+            
+            echo ""
+            echo "=== cert-manager logs ==="
+            kubectl logs -n cert-manager -l app=cert-manager --tail=50 || echo "Could not get cert-manager logs"
+            
+            exit 1
+          fi
+
+      - name: Certificate Status Summary
+        if: always()
+        run: |
+          echo "## 🔐 Certificate Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if kubectl get certificate ocis-tls -n owncloud &>/dev/null; then
+            CERT_READY=$(kubectl get certificate ocis-tls -n owncloud -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+            NOT_AFTER=$(kubectl get certificate ocis-tls -n owncloud -o jsonpath='{.status.notAfter}' 2>/dev/null || echo "N/A")
+            
+            if [ "$CERT_READY" == "True" ]; then
+              echo "✅ **Let's Encrypt certificate is valid**" >> $GITHUB_STEP_SUMMARY
+              echo "- Expires: $NOT_AFTER" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⚠️ **Certificate exists but is not ready**" >> $GITHUB_STEP_SUMMARY
+              echo "- Check certificate status with: \`kubectl describe certificate ocis-tls -n owncloud\`" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "ℹ️ **No Let's Encrypt certificate configured**" >> $GITHUB_STEP_SUMMARY
+            echo "- Using self-signed certificate from Key Vault" >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Deployment Summary
         run: |
           ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
