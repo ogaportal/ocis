@@ -1,0 +1,76 @@
+# Configuration pour récupérer les certificats depuis Azure Key Vault
+# Les certificats doivent être préalablement créés avec manage-certificates.ps1
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: ocis-keyvault-certs
+  namespace: owncloud
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    useVMManagedIdentity: "true"
+    userAssignedIdentityID: ""  # Sera renseigné par Kustomize selon l'environnement
+    keyvaultName: ""  # Sera renseigné par Kustomize selon l'environnement
+    cloudName: ""
+    objects: |
+      array:
+        - |
+          objectName: ocis-tls-cert
+          objectType: cert
+          objectAlias: ocis-tls-cert
+        - |
+          objectName: ocis-tls-key
+          objectType: secret
+          objectAlias: ocis-tls-key
+        - |
+          objectName: keycloak-tls-cert
+          objectType: cert
+          objectAlias: keycloak-tls-cert
+        - |
+          objectName: keycloak-tls-key
+          objectType: secret
+          objectAlias: keycloak-tls-key
+    tenantId: ""  # Sera renseigné par Kustomize
+  secretObjects:
+  - secretName: ocis-tls
+    type: kubernetes.io/tls
+    data:
+    - objectName: ocis-tls-cert
+      key: tls.crt
+    - objectName: ocis-tls-key
+      key: tls.key
+  - secretName: keycloak-tls
+    type: kubernetes.io/tls
+    data:
+    - objectName: keycloak-tls-cert
+      key: tls.crt
+    - objectName: keycloak-tls-key
+      key: tls.key
+---
+# Pod temporaire pour monter les secrets et déclencher la synchronisation
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secrets-sync-pod
+  namespace: owncloud
+  labels:
+    app: secrets-sync
+spec:
+  containers:
+  - name: busybox
+    image: busybox:latest
+    command: 
+    - sleep
+    - "3600"
+    volumeMounts:
+    - name: secrets-store
+      mountPath: "/mnt/secrets-store"
+      readOnly: true
+  volumes:
+  - name: secrets-store
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: ocis-keyvault-certs

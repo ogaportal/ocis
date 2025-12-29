@@ -1,0 +1,33 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Shell scripts should use LF
+*.sh text eol=lf
+
+# PowerShell scripts should use CRLF
+*.ps1 text eol=crlf
+
+# YAML files
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Terraform files
+*.tf text eol=lf
+*.tfvars text eol=lf
+
+# Markdown files
+*.md text eol=lf
+
+# Python files
+*.py text eol=lf
+
+# Ansible files
+*.cfg text eol=lf
+
+# Keep binary files as is
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary

@@ -1,0 +1,7 @@
+# Development environment variables
+target_env: dev
+keycloak_hostname: dev.lesaiglesbraves.online
+ocis_hostname: dev.lesaiglesbraves.online
+keyvault_name: owncloudkvdev
+resource_group: owncloud-rg-dev
+cluster_name: owncloud-aks-dev

@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: owncloud
+
+resources:
+  - namespace.yaml
+  - ocis.yaml
+  - ingress.yaml
+  - certificates-keyvault.yaml
+
+configMapGenerator:
+  - name: ocis-config
+    literals:
+      - ocis-url=https://OCIS_HOSTNAME
+
+secretGenerator:
+  - name: ocis-secret
+    literals:
+      - admin-user-id=admin
+      - admin-password=OCIS_ADMIN_PASSWORD
+      - jwt-secret=OCIS_JWT_SECRET
+      - transfer-secret=OCIS_TRANSFER_SECRET
+      - machine-auth-api-key=OCIS_MACHINE_AUTH_API_KEY
+      - system-user-api-key=OCIS_SYSTEM_USER_API_KEY
+  
+  - name: azure-storage-secret
+    literals:
+      - account-name=STORAGE_ACCOUNT_NAME
+      - account-key=STORAGE_ACCOUNT_KEY
+

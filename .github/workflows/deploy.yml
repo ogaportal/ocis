@@ -1,0 +1,285 @@
+name: Deploy Infrastructure and Applications
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - deploy
+          - destroy
+
+env:
+  TERRAFORM_VERSION: '1.6.0'
+  ANSIBLE_VERSION: '2.15.0'
+  DEV_DOMAIN: dev.lesaiglesbraves.online
+  PROD_DOMAIN: prod.lesaiglesbraves.online
+  DEV_KEYVAULT: owncloudkvdev
+  PROD_KEYVAULT: owncloudkvprod
+
+jobs:
+  check-certificates:
+    name: Check and Create Certificates
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      certificates_exist: ${{ steps.check_certs.outputs.certificates_exist }}
+    
+    steps:
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set environment variables
+        id: set_env
+        run: |
+          if [ "${{ inputs.environment }}" == "dev" ]; then
+            echo "KEYVAULT=${{ env.DEV_KEYVAULT }}" >> $GITHUB_OUTPUT
+            echo "DOMAIN=${{ env.DEV_DOMAIN }}" >> $GITHUB_OUTPUT
+          else
+            echo "KEYVAULT=${{ env.PROD_KEYVAULT }}" >> $GITHUB_OUTPUT
+            echo "DOMAIN=${{ env.PROD_DOMAIN }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check if certificates exist
+        id: check_certs
+        run: |
+          KEYVAULT="${{ steps.set_env.outputs.KEYVAULT }}"
+          
+          # Check for Keycloak certificate
+          KEYCLOAK_CERT=$(az keyvault certificate show \
+            --vault-name "$KEYVAULT" \
+            --name keycloak-tls-cert \
+            --query "id" -o tsv 2>/dev/null || echo "")
+          
+          # Check for OCIS certificate
+          OCIS_CERT=$(az keyvault certificate show \
+            --vault-name "$KEYVAULT" \
+            --name ocis-tls-cert \
+            --query "id" -o tsv 2>/dev/null || echo "")
+          
+          if [ -n "$KEYCLOAK_CERT" ] && [ -n "$OCIS_CERT" ]; then
+            echo "certificates_exist=true" >> $GITHUB_OUTPUT
+            echo "✅ Certificates already exist in Key Vault"
+          else
+            echo "certificates_exist=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Certificates do not exist in Key Vault"
+          fi
+
+      - name: Generate self-signed certificates
+        if: steps.check_certs.outputs.certificates_exist == 'false' && inputs.action == 'deploy'
+        run: |
+          echo "📝 Generating self-signed certificates..."
+          
+          # Create directory for certificates
+          mkdir -p certs
+          
+          DOMAIN="${{ steps.set_env.outputs.DOMAIN }}"
+          
+          # Generate Keycloak certificate
+          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout certs/keycloak-tls-key.pem \
+            -out certs/keycloak-tls-cert.pem \
+            -subj "/C=FR/ST=France/L=Paris/O=OwnCloud/OU=IT/CN=${DOMAIN}" \
+            -addext "subjectAltName=DNS:${DOMAIN},DNS:*.${DOMAIN}"
+          
+          # Generate OCIS certificate
+          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout certs/ocis-tls-key.pem \
+            -out certs/ocis-tls-cert.pem \
+            -subj "/C=FR/ST=France/L=Paris/O=OwnCloud/OU=IT/CN=${DOMAIN}" \
+            -addext "subjectAltName=DNS:${DOMAIN},DNS:*.${DOMAIN}"
+          
+          echo "✅ Self-signed certificates generated"
+
+      - name: Upload certificates to Key Vault
+        if: steps.check_certs.outputs.certificates_exist == 'false' && inputs.action == 'deploy'
+        run: |
+          KEYVAULT="${{ steps.set_env.outputs.KEYVAULT }}"
+          
+          echo "📤 Uploading Keycloak certificate to Key Vault..."
+          az keyvault certificate import \
+            --vault-name "$KEYVAULT" \
+            --name keycloak-tls-cert \
+            --file certs/keycloak-tls-cert.pem
+          
+          az keyvault secret set \
+            --vault-name "$KEYVAULT" \
+            --name keycloak-tls-key \
+            --file certs/keycloak-tls-key.pem \
+            --content-type "application/x-pem-file"
+          
+          echo "📤 Uploading OCIS certificate to Key Vault..."
+          az keyvault certificate import \
+            --vault-name "$KEYVAULT" \
+            --name ocis-tls-cert \
+            --file certs/ocis-tls-cert.pem
+          
+          az keyvault secret set \
+            --vault-name "$KEYVAULT" \
+            --name ocis-tls-key \
+            --file certs/ocis-tls-key.pem \
+            --content-type "application/x-pem-file"
+          
+          echo "✅ All certificates uploaded successfully"
+          
+          # Cleanup
+          rm -rf certs/
+
+  terraform:
+    name: Terraform ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    needs: check-certificates
+    environment: ${{ inputs.environment }}
+    
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ inputs.environment }}
+    
+    outputs:
+      cluster_name: ${{ steps.terraform_output.outputs.cluster_name }}
+      resource_group: ${{ steps.terraform_output.outputs.resource_group }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        if: inputs.action == 'deploy'
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        if: inputs.action == 'deploy'
+        run: terraform apply -auto-approve tfplan
+
+      - name: Terraform Destroy
+        if: inputs.action == 'destroy'
+        run: terraform destroy -auto-approve
+
+      - name: Get Terraform Outputs
+        if: inputs.action == 'deploy'
+        id: terraform_output
+        run: |
+          echo "cluster_name=$(terraform output -raw cluster_name)" >> $GITHUB_OUTPUT
+          echo "resource_group=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
+
+  deploy-apps:
+    name: Deploy Applications with Ansible
+    runs-on: ubuntu-latest
+    needs: [check-certificates, terraform]
+    if: inputs.action == 'deploy'
+    environment: ${{ inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible and dependencies
+        run: |
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          pip install kubernetes openshift PyYAML
+          ansible-galaxy collection install kubernetes.core
+          ansible-galaxy collection install azure.azcollection
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ needs.terraform.outputs.resource_group }} \
+            --name ${{ needs.terraform.outputs.cluster_name }} \
+            --overwrite-existing
+
+      - name: Add Helm repositories
+        run: |
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo add csi-secrets-store-provider-azure https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+          helm repo update
+
+      - name: Deploy with Ansible
+        working-directory: ansible
+        run: |
+          ansible-playbook deploy.yml \
+            -i inventories/hosts \
+            -e @inventories/${{ inputs.environment }}.yml \
+            -e target_env=${{ inputs.environment }}
+
+      - name: Display deployment info
+        run: |
+          echo "Deployment completed for ${{ inputs.environment }} environment"
+          kubectl get ingress -n owncloud
+          kubectl get pods -n owncloud
+
+  destroy-apps:
+    name: Destroy Applications with Ansible
+    runs-on: ubuntu-latest
+    needs: terraform
+    if: inputs.action == 'destroy'
+    environment: ${{ inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible and dependencies
+        run: |
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          pip install kubernetes openshift PyYAML
+          ansible-galaxy collection install kubernetes.core
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group owncloud-rg-${{ inputs.environment }} \
+            --name owncloud-aks-${{ inputs.environment }} \
+            --overwrite-existing
+
+      - name: Destroy with Ansible
+        working-directory: ansible
+        run: |
+          ansible-playbook destroy.yml \
+            -i inventories/hosts \
+            -e @inventories/${{ inputs.environment }}.yml \
+            -e target_env=${{ inputs.environment }}

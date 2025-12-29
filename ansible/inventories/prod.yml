@@ -1,0 +1,7 @@
+# Production environment variables
+target_env: prod
+keycloak_hostname: prod.lesaiglesbraves.online
+ocis_hostname: prod.lesaiglesbraves.online
+keyvault_name: owncloudkvprod
+resource_group: owncloud-rg-prod
+cluster_name: owncloud-aks-prod

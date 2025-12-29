@@ -1,0 +1,175 @@
+---
+- name: Deploy ownCloud OCIS and Keycloak to AKS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  vars:
+    kubeconfig_path: "{{ lookup('env', 'KUBECONFIG') }}"
+  vars_files:
+    - "{{ playbook_dir }}/inventories/{{ target_env }}.yml"
+    
+  tasks:
+    - name: Install required Python packages
+      pip:
+        name:
+          - kubernetes
+          - openshift
+          - PyYAML
+        state: present
+      delegate_to: localhost
+
+    - name: Add Helm repositories
+      kubernetes.core.helm_repository:
+        name: "{{ item.name }}"
+        repo_url: "{{ item.url }}"
+        state: present
+      loop:
+        - name: ingress-nginx
+          url: https://kubernetes.github.io/ingress-nginx
+        - name: csi-secrets-store-provider-azure
+          url: https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+      delegate_to: localhost
+
+    - name: Install NGINX Ingress Controller
+      kubernetes.core.helm:
+        name: ingress-nginx
+        chart_ref: ingress-nginx/ingress-nginx
+        release_namespace: ingress-nginx
+        create_namespace: true
+        kubeconfig: "{{ kubeconfig_path }}"
+        values:
+          controller:
+            service:
+              annotations:
+                service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
+
+    # cert-manager n'est plus utilisé - les certificats sont créés localement
+    # et chargés dans Azure Key Vault, puis synchronisés via CSI Driver
+
+    - name: Check if CSI Driver already exists
+      kubernetes.core.k8s_info:
+        api_version: storage.k8s.io/v1
+        kind: CSIDriver
+        name: secrets-store.csi.k8s.io
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: csi_driver_check
+      ignore_errors: true
+
+    - name: Install Azure Key Vault CSI Driver
+      kubernetes.core.helm:
+        name: csi-secrets-store-provider-azure
+        chart_ref: csi-secrets-store-provider-azure/csi-secrets-store-provider-azure
+        release_namespace: kube-system
+        kubeconfig: "{{ kubeconfig_path }}"
+        values:
+          secrets-store-csi-driver:
+            syncSecret:
+              enabled: true
+      when: csi_driver_check.resources | length == 0
+
+    - name: Clean up old Ingress resources
+      kubernetes.core.k8s:
+        state: absent
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: "{{ item }}"
+        namespace: owncloud
+        kubeconfig: "{{ kubeconfig_path }}"
+      loop:
+        - keycloak-ingress
+        - ocis-ingress
+      ignore_errors: true
+
+    - name: Clean up OCIS deployment to avoid patch conflicts
+      kubernetes.core.k8s:
+        state: absent
+        api_version: apps/v1
+        kind: Deployment
+        name: ocis
+        namespace: owncloud
+        kubeconfig: "{{ kubeconfig_path }}"
+      ignore_errors: true
+
+    - name: Wait for OCIS deployment to be deleted
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: ocis
+        namespace: owncloud
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: ocis_deployment_check
+      until: ocis_deployment_check.resources | length == 0
+      retries: 10
+      delay: 3
+      ignore_errors: true
+
+    - name: Apply Kubernetes manifests with Kustomize
+      ansible.builtin.command:
+        cmd: kubectl apply -k k8s/overlays/{{ target_env }}
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      args:
+        chdir: "{{ playbook_dir }}/.."
+
+    - name: Wait for CSI SecretProviderClass to sync certificates from Key Vault
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: "{{ item }}"
+        namespace: owncloud
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: cert_secret_info
+      until: cert_secret_info.resources | length > 0
+      retries: 15
+      delay: 20
+      loop:
+        - ocis-tls
+        - keycloak-tls
+
+    # - name: Wait for Keycloak to be ready
+    #   kubernetes.core.k8s_info:
+    #     api_version: v1
+    #     kind: Pod
+    #     namespace: owncloud
+    #     label_selectors:
+    #       - app=keycloak
+    #     kubeconfig: "{{ kubeconfig_path }}"
+    #   register: keycloak_pods
+    #   until: keycloak_pods.resources | length > 0 and keycloak_pods.resources[0].status.phase == "Running"
+    #   retries: 15
+    #   delay: 30
+
+    # - name: Wait for OCIS to be ready
+    #   kubernetes.core.k8s_info:
+    #     api_version: v1
+    #     kind: Pod
+    #     namespace: owncloud
+    #     label_selectors:
+    #       - app=ocis
+    #     kubeconfig: "{{ kubeconfig_path }}"
+    #   register: ocis_pods
+    #   until: ocis_pods.resources | length > 0 and ocis_pods.resources[0].status.phase == "Running"
+    #   retries: 15
+    #   delay: 30
+
+    - name: Get Ingress external IP
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: ingress-nginx-controller
+        namespace: ingress-nginx
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: ingress_service
+      until: ingress_service.resources[0].status.loadBalancer.ingress is defined
+      retries: 10
+      delay: 30
+
+    - name: Display deployment information
+      debug:
+        msg:
+          - "Deployment completed successfully!"
+          - "Ingress IP: {{ ingress_service.resources[0].status.loadBalancer.ingress[0].ip }}"
+          - "Please configure your DNS to point to this IP address"
+          - "Keycloak URL: https://{{ ocis_hostname }}/auth"
+          - "OCIS URL: https://{{ ocis_hostname }}"
