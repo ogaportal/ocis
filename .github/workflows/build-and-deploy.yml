@@ -478,9 +478,6 @@ jobs:
           
           echo ""
           echo "✅ Deployment check completed"
-            exit 1
-          fi
-          
           echo "✅ All pods are ready!"
 
       - name: Get Service Information
