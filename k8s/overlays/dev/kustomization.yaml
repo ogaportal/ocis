@@ -42,4 +42,4 @@ secretGenerator:
   - name: ocis-secret
     behavior: merge
     literals:
-      - admin-password=ZIGPz/7gqXIL4vi2Ep2yqDmp37CtjEvH
+      - admin-password=5T3phane
