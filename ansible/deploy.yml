@@ -81,6 +81,29 @@
         - ocis-ingress
       ignore_errors: true
 
+    - name: Clean up OCIS deployment to avoid patch conflicts
+      kubernetes.core.k8s:
+        state: absent
+        api_version: apps/v1
+        kind: Deployment
+        name: ocis
+        namespace: owncloud
+        kubeconfig: "{{ kubeconfig_path }}"
+      ignore_errors: true
+
+    - name: Wait for OCIS deployment to be deleted
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: ocis
+        namespace: owncloud
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: ocis_deployment_check
+      until: ocis_deployment_check.resources | length == 0
+      retries: 10
+      delay: 3
+      ignore_errors: true
+
     - name: Apply Kubernetes manifests with Kustomize
       ansible.builtin.command:
         cmd: kubectl apply -k k8s/overlays/{{ target_env }}
