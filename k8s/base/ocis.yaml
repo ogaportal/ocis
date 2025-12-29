@@ -1,3 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ocis-config-pvc
+  namespace: owncloud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: default
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,50 +39,328 @@ spec:
               name: ocis-config
               key: ocis-url
         - name: OCIS_INSECURE
-          value: "false"
-        - name: PROXY_TLS
           value: "true"
-        - name: PROXY_TLS_CERT
-          value: /etc/ocis/tls/tls.crt
-        - name: PROXY_TLS_KEY
-          value: /etc/ocis/tls/tls.key
-        # Azure Blob Storage configuration
+        - name: PROXY_TLS
+          value: "false"
+        - name: IDP_DISABLE
+          value: "false"
+        - name: PROXY_HTTP_ADDR
+          value: "0.0.0.0:9200"
+        # Storage configuration - using local ocis driver for now
         - name: STORAGE_USERS_DRIVER
-          value: "azureblob"
-        - name: STORAGE_USERS_AZUREBLOB_ACCOUNT_NAME
-          valueFrom:
-            secretKeyRef:
-              name: azure-storage-secret
-              key: account-name
-        - name: STORAGE_USERS_AZUREBLOB_ACCOUNT_KEY
-          valueFrom:
-            secretKeyRef:
-              name: azure-storage-secret
-              key: account-key
-        - name: STORAGE_USERS_AZUREBLOB_CONTAINER_NAME
-          value: "ocis-data"
-        # Keycloak OIDC configuration
-        - name: PROXY_OIDC_ISSUER
-          valueFrom:
-            configMapKeyRef:
-              name: ocis-config
-              key: oidc-issuer
-        - name: WEB_OIDC_CLIENT_ID
-          valueFrom:
-            secretKeyRef:
-              name: ocis-secret
-              key: oidc-client-id
-        - name: WEB_OIDC_CLIENT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: ocis-secret
-              key: oidc-client-secret
+          value: "ocis"
+        # - name: STORAGE_USERS_AZUREBLOB_ACCOUNT_NAME
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: azure-storage-secret
+        #       key: account-name
+        # - name: STORAGE_USERS_AZUREBLOB_ACCOUNT_KEY
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: azure-storage-secret
+        #       key: account-key
+        # - name: STORAGE_USERS_AZUREBLOB_CONTAINER_NAME
+        #   value: "ocis-data"
+        - name: STORAGE_USERS_MOUNT_ID
+          value: "45b65700-f799-49d9-97ee-e34fb1f3ba29"
+        - name: GATEWAY_STORAGE_USERS_MOUNT_ID
+          value: "45b65700-f799-49d9-97ee-e34fb1f3ba29"
+        # LDAP Configuration - DISABLED
+        # - name: GRAPH_LDAP_URI
+        #   value: "ldap://openldap:389"
+        # - name: GRAPH_IDENTITY_BACKEND
+        #   value: "ldap"
+        # OIDC Configuration - DISABLED
+        # - name: OCIS_OIDC_ISSUER
+        #   value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud"
+        # - name: PROXY_OIDC_ISSUER
+        #   value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud"
+        # - name: WEB_OIDC_CLIENT_ID
+        #   value: "ocis"
+        # - name: WEB_OIDC_AUTHORITY
+        #   value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud"
+        # - name: PROXY_AUTOPROVISION_ACCOUNTS
+        #   value: "true"
+        - name: PROXY_ENABLE_BASIC_AUTH
+          value: "true"
         - name: OCIS_ADMIN_USER_ID
           valueFrom:
             secretKeyRef:
               name: ocis-secret
               key: admin-user-id
+        - name: OCIS_ADMIN_USER_ID
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-user-id
+        - name: OCIS_ADMIN_PASSWORD
+          value: "ZIGPz/7gqXIL4vi2Ep2yqDmp37CtjEvH"
         - name: IDM_ADMIN_PASSWORD
+          value: "ZIGPz/7gqXIL4vi2Ep2yqDmp37CtjEvH"
+        - name: IDM_SVC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        - name: IDM_REVASVC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        - name: IDM_IDMSVC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        - name: IDM_IDPSVC_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        - name: OCIS_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: jwt-secret
+        - name: OCIS_TRANSFER_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: transfer-secret
+        - name: OCIS_MACHINE_AUTH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: machine-auth-api-key
+        - name: OCIS_SYSTEM_USER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: OCIS_SYSTEM_USER_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        # Service account IDs for all services
+        - name: GATEWAY_STORAGE_USERS_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: GATEWAY_STORAGE_USERS_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: USERS_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: USERS_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: AUTH_BASIC_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: AUTH_BASIC_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: AUTH_BASIC_LDAP_URI
+          value: "ldaps://localhost:9235"
+        - name: AUTH_BASIC_LDAP_BIND_DN
+          value: "uid=libregraph,ou=sysusers,o=libregraph-idm"
+        - name: AUTH_BASIC_LDAP_BIND_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        - name: STORAGE_SYSTEM_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: STORAGE_SYSTEM_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: STORAGE_USERS_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: STORAGE_USERS_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: THUMBNAILS_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: THUMBNAILS_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: SHARING_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: SHARING_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: PROXY_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: PROXY_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: OCM_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: OCM_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: USERLOG_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: USERLOG_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: NOTIFICATIONS_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: NOTIFICATIONS_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: SEARCH_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: SEARCH_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: AUDIT_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: AUDIT_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: CLIENTLOG_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: CLIENTLOG_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: AUTH_SERVICE_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: AUTH_SERVICE_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: SETTINGS_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: SETTINGS_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: GROUPS_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: GROUPS_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        # Additional service account IDs for all OCIS services
+        - name: FRONTEND_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: FRONTEND_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: GATEWAY_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: GATEWAY_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: STORAGE_SHARES_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: STORAGE_SHARES_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: STORAGE_PUBLICLINK_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: STORAGE_PUBLICLINK_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: ACTIVITYLOG_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: ACTIVITYLOG_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: AUTH_SERVICE_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: AUTH_SERVICE_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: NATS_NATS_HOST
+          value: "0.0.0.0"
+        - name: NATS_NATS_PORT
+          value: "9233"
+        - name: OCIS_BASE_DATA_PATH
+          value: "/var/lib/ocis"
+        - name: OCIS_INSECURE
+          value: "false"
+        # Use builtin IDP instead of external LDAP
+        - name: IDP_LDAP_BIND_DN
+          value: "uid=reva,ou=sysusers,o=libregraph-idm"
+        - name: IDP_LDAP_BIND_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        - name: IDP_LDAP_URI
+          value: "ldaps://localhost:9235"
+        - name: GRAPH_LDAP_URI
+          value: "ldaps://localhost:9235"
+        - name: GRAPH_LDAP_BIND_DN
+          value: "uid=libregraph,ou=sysusers,o=libregraph-idm"
+        - name: GRAPH_LDAP_BIND_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        - name: GRAPH_APPLICATION_ID
+          value: "44ce4d28-cb7a-426f-b41a-b59f35c2ddfd"
+        - name: GRAPH_SERVICE_ACCOUNT_ID
+          value: "228c722a-e18c-4f90-b2ee-d057f66aefe0"
+        - name: GRAPH_SERVICE_ACCOUNT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: system-user-api-key
+        - name: GROUPS_LDAP_URI
+          value: "ldaps://localhost:9235"
+        - name: GROUPS_LDAP_BIND_DN
+          value: "uid=libregraph,ou=sysusers,o=libregraph-idm"
+        - name: GROUPS_LDAP_BIND_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ocis-secret
+              key: admin-password
+        - name: USERS_LDAP_URI
+          value: "ldaps://localhost:9235"
+        - name: USERS_LDAP_BIND_DN
+          value: "uid=libregraph,ou=sysusers,o=libregraph-idm"
+        - name: USERS_LDAP_BIND_PASSWORD
           valueFrom:
             secretKeyRef:
               name: ocis-secret
@@ -85,13 +376,13 @@ spec:
         - name: tls
           mountPath: /etc/ocis/tls
           readOnly: true
-        - name: config
-          mountPath: /etc/ocis/config
+        - name: data
+          mountPath: /var/lib/ocis
       volumes:
       - name: tls
         secret:
           secretName: ocis-tls
-      - name: config
+      - name: data
         emptyDir: {}
 ---
 apiVersion: v1

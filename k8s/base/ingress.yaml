@@ -25,10 +25,3 @@ spec:
             name: ocis
             port:
               number: 9200
-      - path: /auth
-        pathType: Prefix
-        backend:
-          service:
-            name: keycloak
-            port:
-              number: 8080

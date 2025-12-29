@@ -33,21 +33,13 @@ patches:
         value: 15e0ba3e-2f37-4612-985f-fd8525b62b83
 
 configMapGenerator:
-  - name: keycloak-config
-    behavior: merge
-    literals:
-      - hostname=dev.lesaiglesbraves.online
-      - db-host=owncloud-db-dev.postgres.database.azure.com
-  
   - name: ocis-config
     behavior: merge
     literals:
       - ocis-url=https://dev.lesaiglesbraves.online
-      - oidc-issuer=https://dev.lesaiglesbraves.online/auth/realms/owncloud
-      - db-host=owncloud-db-dev.postgres.database.azure.com
 
 secretGenerator:
-  - name: postgres-secret
+  - name: ocis-secret
     behavior: merge
     literals:
-      - username=owncloudadmin
+      - admin-password=ZIGPz/7gqXIL4vi2Ep2yqDmp37CtjEvH
