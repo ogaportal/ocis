@@ -136,25 +136,13 @@ jobs:
           
           echo "🔍 Checking certificates in Key Vault: $KEY_VAULT_NAME"
           
-          # Vérifier si les certificats existent en vérifiant la sortie de la commande
-          KEYCLOAK_CERT=1
-          OCIS_CERT=1
-          KEYCLOAK_KEY=0
+          # Vérifier si les certificats OCIS existent
+          OCIS_CERT=0
           OCIS_KEY=0
           
-          # Vérifier keycloak-tls-cert
-          # if az keyvault certificate show --vault-name $KEY_VAULT_NAME --name keycloak-tls-cert --query "name" -o tsv 2>/dev/null | grep -q "keycloak-tls-cert"; then
-          #   KEYCLOAK_CERT=1
-          # fi
-          
           # Vérifier ocis-tls-cert
-          # if az keyvault certificate show --vault-name $KEY_VAULT_NAME --name ocis-tls-cert --query "name" -o tsv 2>/dev/null | grep -q "ocis-tls-cert"; then
-          #   OCIS_CERT=1
-          # fi
-          
-          # Vérifier keycloak-tls-key
-          if az keyvault secret show --vault-name $KEY_VAULT_NAME --name keycloak-tls-key --query "name" -o tsv 2>/dev/null | grep -q "keycloak-tls-key"; then
-            KEYCLOAK_KEY=1
+          if az keyvault certificate show --vault-name $KEY_VAULT_NAME --name ocis-tls-cert --query "name" -o tsv 2>/dev/null | grep -q "ocis-tls-cert"; then
+            OCIS_CERT=1
           fi
           
           # Vérifier ocis-tls-key
@@ -162,17 +150,13 @@ jobs:
             OCIS_KEY=1
           fi
           
-          if [ "$KEYCLOAK_CERT" -gt 0 ] && [ "$OCIS_CERT" -gt 0 ] && [ "$KEYCLOAK_KEY" -gt 0 ] && [ "$OCIS_KEY" -gt 0 ]; then
+          if [ "$OCIS_CERT" -gt 0 ] && [ "$OCIS_KEY" -gt 0 ]; then
             echo "✅ All certificates already exist in Key Vault"
-            echo "  - keycloak-tls-cert: Found"
-            echo "  - keycloak-tls-key: Found"
             echo "  - ocis-tls-cert: Found"
             echo "  - ocis-tls-key: Found"
             echo "certificates_exist=true" >> $GITHUB_OUTPUT
           else
             echo "⚠️ Some certificates are missing in Key Vault"
-            echo "  - keycloak-tls-cert: $([ $KEYCLOAK_CERT -gt 0 ] && echo 'Found' || echo 'Missing')"
-            echo "  - keycloak-tls-key: $([ $KEYCLOAK_KEY -gt 0 ] && echo 'Found' || echo 'Missing')"
             echo "  - ocis-tls-cert: $([ $OCIS_CERT -gt 0 ] && echo 'Found' || echo 'Missing')"
             echo "  - ocis-tls-key: $([ $OCIS_KEY -gt 0 ] && echo 'Found' || echo 'Missing')"
             echo "certificates_exist=false" >> $GITHUB_OUTPUT
@@ -194,14 +178,6 @@ jobs:
           # Créer le répertoire pour les certificats
           mkdir -p certs
           
-          # Générer le certificat Keycloak
-          echo "Generating Keycloak certificate..."
-          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout certs/keycloak-tls.key \
-            -out certs/keycloak-tls.crt \
-            -subj "/C=FR/ST=France/L=Paris/O=OwnCloud/OU=IT/CN=$DOMAIN" \
-            -addext "subjectAltName=DNS:$DOMAIN,DNS:*.$DOMAIN"
-          
           # Générer le certificat OCIS
           echo "Generating OCIS certificate..."
           openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
@@ -212,9 +188,6 @@ jobs:
           
           # Créer des fichiers PFX pour Azure Key Vault
           echo "Creating PFX files..."
-          openssl pkcs12 -export -out certs/keycloak-tls.pfx \
-            -inkey certs/keycloak-tls.key -in certs/keycloak-tls.crt -passout pass:
-          
           openssl pkcs12 -export -out certs/ocis-tls.pfx \
             -inkey certs/ocis-tls.key -in certs/ocis-tls.crt -passout pass:
           
@@ -227,19 +200,6 @@ jobs:
           KEY_VAULT_NAME="owncloudkv${ENVIRONMENT}"
           
           echo "📤 Uploading certificates to Key Vault: $KEY_VAULT_NAME"
-          
-          # Upload Keycloak certificate
-          echo "Uploading Keycloak certificate..."
-          az keyvault certificate import \
-            --vault-name $KEY_VAULT_NAME \
-            --name keycloak-tls-cert \
-            --file certs/keycloak-tls.pfx
-          
-          az keyvault secret set \
-            --vault-name $KEY_VAULT_NAME \
-            --name keycloak-tls-key \
-            --file certs/keycloak-tls.key \
-            --content-type "application/x-pem-file"
           
           # Upload OCIS certificate
           echo "Uploading OCIS certificate..."
@@ -386,7 +346,6 @@ jobs:
           echo "🧹 Cleaning up old SecretProviderClass and secrets..."
           
           # Supprimer les anciennes SecretProviderClass (sauf ocis-keyvault-certs)
-          kubectl delete secretproviderclass keycloak-tls -n owncloud --ignore-not-found=true
           kubectl delete secretproviderclass ocis-tls -n owncloud --ignore-not-found=true
           
           # Supprimer le pod de sync s'il existe déjà
@@ -414,25 +373,16 @@ jobs:
           # Générer des secrets aléatoires
           JWT_SECRET=$(openssl rand -base64 32)
           OCIS_ADMIN_PASSWORD=$(openssl rand -base64 24)
-          KEYCLOAK_ADMIN_PASSWORD=$(openssl rand -base64 24)
-          OIDC_CLIENT_SECRET=$(openssl rand -base64 32)
           
           # Patcher le secret ocis-secret
           kubectl patch secret ocis-secret -n owncloud --type='json' -p='[
             {"op": "replace", "path": "/data/admin-password", "value": "'$(echo -n "$OCIS_ADMIN_PASSWORD" | base64 -w0)'"},
-            {"op": "replace", "path": "/data/oidc-client-secret", "value": "'$(echo -n "$OIDC_CLIENT_SECRET" | base64 -w0)'"},
             {"op": "replace", "path": "/data/jwt-secret", "value": "'$(echo -n "$JWT_SECRET" | base64 -w0)'"}
-          ]'
-          
-          # Patcher le secret keycloak-secret
-          kubectl patch secret keycloak-secret -n owncloud --type='json' -p='[
-            {"op": "replace", "path": "/data/admin-password", "value": "'$(echo -n "$KEYCLOAK_ADMIN_PASSWORD" | base64 -w0)'"}
           ]'
           
           echo "✅ Secrets generated and applied"
           echo "⚠️ Save these credentials securely:"
           echo "- OCIS Admin Password: $OCIS_ADMIN_PASSWORD"
-          echo "- Keycloak Admin Password: $KEYCLOAK_ADMIN_PASSWORD"
 
       - name: Wait for Deployments
         run: |
@@ -477,7 +427,7 @@ jobs:
           TIMEOUT=300
           ELAPSED=0
           while [ $ELAPSED -lt $TIMEOUT ]; do
-            if kubectl get secret ocis-tls -n owncloud &>/dev/null && kubectl get secret keycloak-tls -n owncloud &>/dev/null; then
+            if kubectl get secret ocis-tls -n owncloud &>/dev/null; then
               echo "✅ TLS secrets are ready!"
               break
             fi
@@ -496,8 +446,6 @@ jobs:
           # Maintenant attendre que les applications soient prêtes
           echo ""
           echo "=== Waiting for application pods (timeout: 10 minutes) ==="
-          kubectl wait --for=condition=ready pod -l app=postgres -n owncloud --timeout=600s || echo "⚠️ Postgres timeout"
-          kubectl wait --for=condition=ready pod -l app=keycloak -n owncloud --timeout=600s || echo "⚠️ Keycloak timeout"
           kubectl wait --for=condition=ready pod -l app=ocis -n owncloud --timeout=600s || echo "⚠️ OCIS timeout"
           
           # Afficher le statut final
@@ -573,8 +521,7 @@ jobs:
           echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "1. Update DNS record to point $DOMAIN to $INGRESS_IP" >> $GITHUB_STEP_SUMMARY
-          echo "2. Access ownCloud at https://$DOMAIN" >> $GITHUB_STEP_SUMMARY
-          echo "3. Access Keycloak admin at https://$DOMAIN/auth" >> $GITHUB_STEP_SUMMARY
+          echo "2. Access ownCloud OCIS at https://$DOMAIN" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "⚠️ **Note**: Self-signed certificate in use. For production, configure Let's Encrypt." >> $GITHUB_STEP_SUMMARY
 

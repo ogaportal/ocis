@@ -43,7 +43,7 @@ spec:
         - name: PROXY_TLS
           value: "false"
         - name: IDP_DISABLE
-          value: "true"
+          value: "false"
         - name: PROXY_HTTP_ADDR
           value: "0.0.0.0:9200"
         # Storage configuration - using local ocis driver for now
@@ -65,29 +65,23 @@ spec:
           value: "45b65700-f799-49d9-97ee-e34fb1f3ba29"
         - name: GATEWAY_STORAGE_USERS_MOUNT_ID
           value: "45b65700-f799-49d9-97ee-e34fb1f3ba29"
-        - name: OCIS_OIDC_ISSUER
-          value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud"
-        - name: PROXY_OIDC_ISSUER
-          value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud"
-        - name: PROXY_OIDC_INSECURE
-          value: "false"
-        - name: WEB_OIDC_CLIENT_ID
-          value: "ocis"
-        - name: WEB_OIDC_AUTHORITY
-          value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud"
-        - name: WEB_OIDC_METADATA_URL
-          value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud/.well-known/openid-configuration"
-        - name: PROXY_AUTOPROVISION_ACCOUNTS
-          value: "true"
+        # LDAP Configuration - DISABLED
+        # - name: GRAPH_LDAP_URI
+        #   value: "ldap://openldap:389"
+        # - name: GRAPH_IDENTITY_BACKEND
+        #   value: "ldap"
+        # OIDC Configuration - DISABLED
+        # - name: OCIS_OIDC_ISSUER
+        #   value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud"
+        # - name: PROXY_OIDC_ISSUER
+        #   value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud"
+        # - name: WEB_OIDC_CLIENT_ID
+        #   value: "ocis"
+        # - name: WEB_OIDC_AUTHORITY
+        #   value: "https://dev.lesaiglesbraves.online/auth/realms/owncloud"
+        # - name: PROXY_AUTOPROVISION_ACCOUNTS
+        #   value: "true"
         - name: PROXY_ENABLE_BASIC_AUTH
-          value: "false"
-        - name: PROXY_ROLE_ASSIGNMENT_DRIVER
-          value: "default"
-        - name: PROXY_USER_OIDC_CLAIM
-          value: "preferred_username"
-        - name: PROXY_USER_CS3_CLAIM
-          value: "username"
-        - name: GRAPH_ASSIGN_DEFAULT_USER_ROLE
           value: "true"
         - name: OCIS_ADMIN_USER_ID
           valueFrom:
