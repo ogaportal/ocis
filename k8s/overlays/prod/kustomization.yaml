@@ -20,36 +20,26 @@ patches:
   
   - target:
       kind: SecretProviderClass
-      name: keycloak-tls
+      name: ocis-keyvault-certs
     patch: |-
       - op: replace
         path: /spec/parameters/keyvaultName
         value: owncloudkvprod
-  
-  - target:
-      kind: SecretProviderClass
-      name: ocis-tls
-    patch: |-
       - op: replace
-        path: /spec/parameters/keyvaultName
-        value: owncloudkvprod
+        path: /spec/parameters/tenantId
+        value: adb4b793-234b-4db7-8a27-1eb5a79637e2
+      - op: replace
+        path: /spec/parameters/userAssignedIdentityID
+        value: 15e0ba3e-2f37-4612-985f-fd8525b62b83
 
 configMapGenerator:
-  - name: keycloak-config
-    behavior: merge
-    literals:
-      - hostname=prod.lesaiglesbraves.online
-      - db-host=owncloud-db-prod.postgres.database.azure.com
-  
   - name: ocis-config
     behavior: merge
     literals:
       - ocis-url=https://prod.lesaiglesbraves.online
-      - oidc-issuer=https://prod.lesaiglesbraves.online/auth/realms/owncloud
-      - db-host=owncloud-db-prod.postgres.database.azure.com
 
 secretGenerator:
-  - name: postgres-secret
+  - name: ocis-secret
     behavior: merge
     literals:
-      - username=owncloudadmin
+      - admin-password=PROD_ADMIN_PASSWORD_PLACEHOLDER
