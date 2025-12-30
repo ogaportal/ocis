@@ -581,6 +581,198 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "⚠️ **Note**: Using self-signed certificate from Azure Key Vault. Your browser will show a security warning." >> $GITHUB_STEP_SUMMARY
 
+  # Job de test de charge - Uniquement en production
+  load-test:
+    name: Load Testing (Production Only)
+    runs-on: ubuntu-latest
+    needs: [set-environment, deploy-apps]
+    if: |
+      github.event_name != 'pull_request' && 
+      github.ref == 'refs/heads/main' &&
+      needs.set-environment.outputs.environment == 'prod'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Locust
+        run: |
+          echo "📦 Installing Locust and dependencies..."
+          pip install -r scripts/requirements-locust.txt
+
+      - name: Configure Test Environment
+        id: test-config
+        run: |
+          DOMAIN="prod.lesaiglesbraves.online"
+          echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+          echo "🎯 Target: https://$DOMAIN"
+
+      - name: Wait for Application Readiness
+        run: |
+          DOMAIN="${{ steps.test-config.outputs.domain }}"
+          echo "⏳ Waiting for application to be ready..."
+          
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -k -s -f -o /dev/null -w "%{http_code}" "https://$DOMAIN" | grep -q "200\|301\|302\|307\|308"; then
+              echo "✅ Application is responding"
+              break
+            fi
+            
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "⏳ Attempt $RETRY_COUNT/$MAX_RETRIES - Waiting 10s..."
+            sleep 10
+          done
+          
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "❌ Application did not become ready in time"
+            exit 1
+          fi
+
+      - name: Run Load Test
+        id: load-test
+        run: |
+          DOMAIN="${{ steps.test-config.outputs.domain }}"
+          
+          echo "🚀 Starting load test against https://$DOMAIN"
+          echo ""
+          echo "Test Configuration:"
+          echo "- Users: 50 concurrent users"
+          echo "- Spawn rate: 5 users/second"
+          echo "- Duration: 2 minutes"
+          echo "- Success criteria: <5% failure rate, <3000ms avg response time"
+          echo ""
+          
+          # Run Locust in headless mode
+          locust \
+            -f scripts/locustfile.py \
+            --host "https://$DOMAIN" \
+            --users 50 \
+            --spawn-rate 5 \
+            --run-time 2m \
+            --headless \
+            --html reports/load-test-report.html \
+            --csv reports/load-test \
+            --exit-code-on-error 0 \
+            || echo "test_failed=true" >> $GITHUB_OUTPUT
+          
+          # Create reports directory if it doesn't exist
+          mkdir -p reports
+
+      - name: Parse Test Results
+        if: always()
+        id: results
+        run: |
+          if [ -f "reports/load-test_stats.csv" ]; then
+            echo "📊 Parsing test results..."
+            
+            # Extract key metrics from CSV
+            TOTAL_REQUESTS=$(tail -n 1 reports/load-test_stats.csv | cut -d',' -f3 | tr -d '"')
+            TOTAL_FAILURES=$(tail -n 1 reports/load-test_stats.csv | cut -d',' -f4 | tr -d '"')
+            AVG_RESPONSE=$(tail -n 1 reports/load-test_stats.csv | cut -d',' -f6 | tr -d '"')
+            
+            # Calculate failure rate
+            if [ "$TOTAL_REQUESTS" -gt 0 ]; then
+              FAILURE_RATE=$(awk "BEGIN {printf \"%.2f\", ($TOTAL_FAILURES / $TOTAL_REQUESTS) * 100}")
+            else
+              FAILURE_RATE="0.00"
+            fi
+            
+            echo "total_requests=$TOTAL_REQUESTS" >> $GITHUB_OUTPUT
+            echo "total_failures=$TOTAL_FAILURES" >> $GITHUB_OUTPUT
+            echo "failure_rate=$FAILURE_RATE" >> $GITHUB_OUTPUT
+            echo "avg_response=$AVG_RESPONSE" >> $GITHUB_OUTPUT
+            
+            # Determine pass/fail
+            PASSED=true
+            if (( $(echo "$FAILURE_RATE > 5.0" | bc -l) )); then
+              PASSED=false
+            fi
+            if (( $(echo "$AVG_RESPONSE > 3000" | bc -l) )); then
+              PASSED=false
+            fi
+            
+            echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Results file not found"
+            echo "passed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-reports
+          path: reports/
+          retention-days: 30
+
+      - name: Load Test Summary
+        if: always()
+        run: |
+          DOMAIN="${{ steps.test-config.outputs.domain }}"
+          TOTAL_REQUESTS="${{ steps.results.outputs.total_requests }}"
+          TOTAL_FAILURES="${{ steps.results.outputs.total_failures }}"
+          FAILURE_RATE="${{ steps.results.outputs.failure_rate }}"
+          AVG_RESPONSE="${{ steps.results.outputs.avg_response }}"
+          PASSED="${{ steps.results.outputs.passed }}"
+          
+          echo "## 📊 Load Test Results - Production" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target**: https://$DOMAIN" >> $GITHUB_STEP_SUMMARY
+          echo "- **Concurrent Users**: 50" >> $GITHUB_STEP_SUMMARY
+          echo "- **Test Duration**: 2 minutes" >> $GITHUB_STEP_SUMMARY
+          echo "- **Spawn Rate**: 5 users/second" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Requests | $TOTAL_REQUESTS | ℹ️ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed Requests | $TOTAL_FAILURES | ℹ️ |" >> $GITHUB_STEP_SUMMARY
+          
+          if (( $(echo "$FAILURE_RATE <= 5.0" | bc -l) )); then
+            echo "| Failure Rate | $FAILURE_RATE% | ✅ (threshold: <5%) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Failure Rate | $FAILURE_RATE% | ❌ (threshold: <5%) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if (( $(echo "$AVG_RESPONSE <= 3000" | bc -l) )); then
+            echo "| Avg Response Time | ${AVG_RESPONSE}ms | ✅ (threshold: <3000ms) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Avg Response Time | ${AVG_RESPONSE}ms | ❌ (threshold: <3000ms) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$PASSED" == "true" ]; then
+            echo "### ✅ Load Test PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The application successfully handled 50 concurrent users with acceptable performance." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Load Test FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The application did not meet performance criteria. Please review the detailed reports." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📄 **Detailed HTML report available in artifacts**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail on Test Failure
+        if: steps.results.outputs.passed == 'false'
+        run: |
+          echo "❌ Load test failed - performance criteria not met"
+          exit 1
+
   # Job de nettoyage en cas d'échec
   cleanup-on-failure:
     name: Cleanup on Failure
