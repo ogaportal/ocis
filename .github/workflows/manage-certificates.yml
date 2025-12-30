@@ -16,7 +16,7 @@ on:
         type: choice
         options:
           - self-signed
-          - letsencrypt
+          - trusted
       action:
         description: 'Action to perform'
         required: true
@@ -68,13 +68,6 @@ jobs:
           # Create directory for certificates
           mkdir -p certs
           
-          # Generate Keycloak certificate
-          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout certs/keycloak-tls-key.pem \
-            -out certs/keycloak-tls-cert.pem \
-            -subj "/C=FR/ST=France/L=Paris/O=OwnCloud/OU=IT/CN=${{ steps.set_env.outputs.DOMAIN }}" \
-            -addext "subjectAltName=DNS:${{ steps.set_env.outputs.DOMAIN }},DNS:*.${{ steps.set_env.outputs.DOMAIN }}"
-          
           # Generate OCIS certificate
           openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
             -keyout certs/ocis-tls-key.pem \
@@ -82,42 +75,32 @@ jobs:
             -subj "/C=FR/ST=France/L=Paris/O=OwnCloud/OU=IT/CN=${{ steps.set_env.outputs.DOMAIN }}" \
             -addext "subjectAltName=DNS:${{ steps.set_env.outputs.DOMAIN }},DNS:*.${{ steps.set_env.outputs.DOMAIN }}"
           
-          echo "Self-signed certificates generated successfully"
+          echo "✅ Self-signed certificate generated successfully"
 
-      - name: Request Let's Encrypt certificates
-        if: inputs.certificate_type == 'letsencrypt' && inputs.action == 'create'
+      - name: Request trusted CA certificates
+        if: inputs.certificate_type == 'trusted' && inputs.action == 'create'
         run: |
-          echo "⚠️ Let's Encrypt certificates require a valid domain with DNS configured"
-          echo "For production, consider using cert-manager in the cluster"
-          echo "This step will use ACME DNS challenge - ensure DNS is configured"
-          
-          # Install certbot
-          sudo apt-get update
-          sudo apt-get install -y certbot
-          
-          # Note: This is a placeholder - actual implementation requires DNS challenge setup
-          # You would typically use Azure DNS or another DNS provider
-          echo "Please configure DNS challenge for Let's Encrypt"
-          echo "Consider using cert-manager in-cluster instead"
+          echo "⚠️ Trusted certificates (Let's Encrypt, ZeroSSL, etc.) require manual generation"
+          echo ""
+          echo "For production environments, follow these steps:"
+          echo "1. Use acme.sh or certbot locally to generate certificates with DNS validation"
+          echo "2. Upload the generated certificates using upload-certificate.ps1 script"
+          echo ""
+          echo "Example with acme.sh:"
+          echo "  ~/.acme.sh/acme.sh --issue --dns -d ${{ steps.set_env.outputs.DOMAIN }}"
+          echo "  # Add the TXT record to your DNS"
+          echo "  ~/.acme.sh/acme.sh --renew --dns -d ${{ steps.set_env.outputs.DOMAIN }}"
+          echo ""
+          echo "Then upload to Key Vault:"
+          echo "  .\scripts\upload-certificate.ps1 -CertPath <path> -KeyVaultName ${{ steps.set_env.outputs.KEYVAULT }}"
+          echo ""
+          echo "Or use Azure CLI directly:"
+          echo "  az keyvault certificate import --vault-name ${{ steps.set_env.outputs.KEYVAULT }} --name ocis-tls-cert --file combined.pem"
+          echo "  az keyvault secret set --vault-name ${{ steps.set_env.outputs.KEYVAULT }} --name ocis-tls-key --file privkey.pem"
+          echo ""
+          echo "ℹ️ This workflow only supports self-signed certificate generation"
+          echo "For trusted certificates, please generate them manually and upload"
           exit 1
-
-      - name: Upload Keycloak certificate to Key Vault
-        if: inputs.action == 'create' && inputs.certificate_type == 'self-signed'
-        run: |
-          # Upload certificate
-          az keyvault certificate import \
-            --vault-name ${{ steps.set_env.outputs.KEYVAULT }} \
-            --name keycloak-tls-cert \
-            --file certs/keycloak-tls-cert.pem
-          
-          # Upload private key as secret
-          az keyvault secret set \
-            --vault-name ${{ steps.set_env.outputs.KEYVAULT }} \
-            --name keycloak-tls-key \
-            --file certs/keycloak-tls-key.pem \
-            --content-type "application/x-pem-file"
-          
-          echo "✅ Keycloak certificate uploaded to Key Vault"
 
       - name: Upload OCIS certificate to Key Vault
         if: inputs.action == 'create' && inputs.certificate_type == 'self-signed'
@@ -140,15 +123,6 @@ jobs:
       - name: Delete certificates from Key Vault
         if: inputs.action == 'delete'
         run: |
-          # Delete Keycloak certificates
-          az keyvault certificate delete \
-            --vault-name ${{ steps.set_env.outputs.KEYVAULT }} \
-            --name keycloak-tls-cert || true
-          
-          az keyvault secret delete \
-            --vault-name ${{ steps.set_env.outputs.KEYVAULT }} \
-            --name keycloak-tls-key || true
-          
           # Delete OCIS certificates
           az keyvault certificate delete \
             --vault-name ${{ steps.set_env.outputs.KEYVAULT }} \
@@ -158,23 +132,23 @@ jobs:
             --vault-name ${{ steps.set_env.outputs.KEYVAULT }} \
             --name ocis-tls-key || true
           
-          echo "✅ Certificates deleted from Key Vault"
+          echo "✅ OCIS certificates deleted from Key Vault"
 
       - name: Verify certificates in Key Vault
         if: inputs.action == 'create'
         run: |
-          echo "Verifying certificates in Key Vault..."
+          echo "🔍 Verifying certificates in Key Vault..."
           
           # List certificates
           az keyvault certificate list \
             --vault-name ${{ steps.set_env.outputs.KEYVAULT }} \
-            --query "[?starts_with(name, 'keycloak-tls') || starts_with(name, 'ocis-tls')].{Name:name, Enabled:attributes.enabled, Expires:attributes.expires}" \
+            --query "[?starts_with(name, 'ocis-tls')].{Name:name, Enabled:attributes.enabled, Expires:attributes.expires}" \
             --output table
           
           # List secrets
           az keyvault secret list \
             --vault-name ${{ steps.set_env.outputs.KEYVAULT }} \
-            --query "[?starts_with(name, 'keycloak-tls') || starts_with(name, 'ocis-tls')].{Name:name, Enabled:attributes.enabled, Expires:attributes.expires}" \
+            --query "[?starts_with(name, 'ocis-tls')].{Name:name, Enabled:attributes.enabled}" \
             --output table
 
       - name: Cleanup temporary files
