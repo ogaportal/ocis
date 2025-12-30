@@ -372,9 +372,11 @@ jobs:
           
           # Attendre que le secret soit créé par Kustomize
           echo "Waiting for ocis-secret to be created..."
+          SECRET_NAME=""
           for i in {1..30}; do
-            if kubectl get secret ocis-secret -n owncloud &>/dev/null; then
-              echo "✅ Secret found!"
+            SECRET_NAME=$(kubectl get secrets -n owncloud -o name | grep "secret/ocis-secret-" | head -n1 | cut -d'/' -f2)
+            if [ -n "$SECRET_NAME" ]; then
+              echo "✅ Secret found: $SECRET_NAME"
               break
             fi
             echo "Waiting... ($i/30)"
@@ -382,8 +384,10 @@ jobs:
           done
           
           # Vérifier que le secret existe
-          if ! kubectl get secret ocis-secret -n owncloud &>/dev/null; then
+          if [ -z "$SECRET_NAME" ]; then
             echo "❌ Error: ocis-secret not found after waiting"
+            echo "Available secrets:"
+            kubectl get secrets -n owncloud
             exit 1
           fi
           
@@ -395,7 +399,7 @@ jobs:
           OCIS_ADMIN_PASSWORD=$(openssl rand -base64 24)
           
           # Patcher le secret ocis-secret avec tous les secrets nécessaires
-          kubectl patch secret ocis-secret -n owncloud --type='json' -p='[
+          kubectl patch secret $SECRET_NAME -n owncloud --type='json' -p='[
             {"op": "replace", "path": "/data/admin-password", "value": "'$(echo -n "$OCIS_ADMIN_PASSWORD" | base64 -w0)'"},
             {"op": "replace", "path": "/data/jwt-secret", "value": "'$(echo -n "$JWT_SECRET" | base64 -w0)'"},
             {"op": "replace", "path": "/data/transfer-secret", "value": "'$(echo -n "$TRANSFER_SECRET" | base64 -w0)'"},
