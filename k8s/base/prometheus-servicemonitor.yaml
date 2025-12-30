@@ -1,0 +1,19 @@
+---
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: ocis-metrics
+  namespace: monitoring
+  labels:
+    app: ocis
+spec:
+  selector:
+    matchLabels:
+      app: ocis
+  namespaceSelector:
+    matchNames:
+      - owncloud
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
