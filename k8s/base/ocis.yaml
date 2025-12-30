@@ -407,12 +407,21 @@ spec:
           readOnly: true
         - name: data
           mountPath: /var/lib/ocis
+        - name: secrets-store
+          mountPath: /mnt/secrets-store
+          readOnly: true
       volumes:
       - name: tls
         secret:
           secretName: ocis-tls
       - name: data
         emptyDir: {}
+      - name: secrets-store
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: ocis-keyvault-certs
 ---
 apiVersion: v1
 kind: Service
