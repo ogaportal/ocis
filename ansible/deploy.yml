@@ -125,7 +125,6 @@
       delay: 20
       loop:
         - ocis-tls
-        - keycloak-tls
 
     # - name: Wait for Keycloak to be ready
     #   kubernetes.core.k8s_info:
@@ -171,5 +170,4 @@
           - "Deployment completed successfully!"
           - "Ingress IP: {{ ingress_service.resources[0].status.loadBalancer.ingress[0].ip }}"
           - "Please configure your DNS to point to this IP address"
-          - "Keycloak URL: https://{{ ocis_hostname }}/auth"
           - "OCIS URL: https://{{ ocis_hostname }}"
