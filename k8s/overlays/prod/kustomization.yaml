@@ -30,7 +30,7 @@ patches:
         value: adb4b793-234b-4db7-8a27-1eb5a79637e2
       - op: replace
         path: /spec/parameters/userAssignedIdentityID
-        value: 15e0ba3e-2f37-4612-985f-fd8525b62b83
+        value: 14d82c77-2dd4-4932-84e4-51ed88896ccc
 
 configMapGenerator:
   - name: ocis-config
