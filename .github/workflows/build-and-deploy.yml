@@ -370,14 +370,37 @@ jobs:
         run: |
           echo "🔐 Generating random secrets for applications..."
           
+          # Attendre que le secret soit créé par Kustomize
+          echo "Waiting for ocis-secret to be created..."
+          for i in {1..30}; do
+            if kubectl get secret ocis-secret -n owncloud &>/dev/null; then
+              echo "✅ Secret found!"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+          
+          # Vérifier que le secret existe
+          if ! kubectl get secret ocis-secret -n owncloud &>/dev/null; then
+            echo "❌ Error: ocis-secret not found after waiting"
+            exit 1
+          fi
+          
           # Générer des secrets aléatoires
           JWT_SECRET=$(openssl rand -base64 32)
+          TRANSFER_SECRET=$(openssl rand -base64 32)
+          MACHINE_AUTH_API_KEY=$(openssl rand -base64 32)
+          SYSTEM_USER_API_KEY=$(openssl rand -base64 32)
           OCIS_ADMIN_PASSWORD=$(openssl rand -base64 24)
           
-          # Patcher le secret ocis-secret
+          # Patcher le secret ocis-secret avec tous les secrets nécessaires
           kubectl patch secret ocis-secret -n owncloud --type='json' -p='[
             {"op": "replace", "path": "/data/admin-password", "value": "'$(echo -n "$OCIS_ADMIN_PASSWORD" | base64 -w0)'"},
-            {"op": "replace", "path": "/data/jwt-secret", "value": "'$(echo -n "$JWT_SECRET" | base64 -w0)'"}
+            {"op": "replace", "path": "/data/jwt-secret", "value": "'$(echo -n "$JWT_SECRET" | base64 -w0)'"},
+            {"op": "replace", "path": "/data/transfer-secret", "value": "'$(echo -n "$TRANSFER_SECRET" | base64 -w0)'"},
+            {"op": "replace", "path": "/data/machine-auth-api-key", "value": "'$(echo -n "$MACHINE_AUTH_API_KEY" | base64 -w0)'"},
+            {"op": "replace", "path": "/data/system-user-api-key", "value": "'$(echo -n "$SYSTEM_USER_API_KEY" | base64 -w0)'"}
           ]'
           
           echo "✅ Secrets generated and applied"
