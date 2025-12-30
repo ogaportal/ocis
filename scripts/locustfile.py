@@ -17,7 +17,9 @@ class OCISUser(HttpUser):
     
     def on_start(self):
         """Called when a user starts - attempt to access the homepage"""
-        self.client.verify = False  # Ignore SSL verification for self-signed certs
+        # SSL verification is enabled by default
+        # Set to False only if testing against self-signed certificates
+        self.client.verify = True
         
     @task(3)
     def access_homepage(self):
