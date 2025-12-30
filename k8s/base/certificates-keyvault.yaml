@@ -23,14 +23,6 @@ spec:
           objectName: ocis-tls-key
           objectType: secret
           objectAlias: ocis-tls-key
-        - |
-          objectName: keycloak-tls-cert
-          objectType: cert
-          objectAlias: keycloak-tls-cert
-        - |
-          objectName: keycloak-tls-key
-          objectType: secret
-          objectAlias: keycloak-tls-key
     tenantId: ""  # Sera renseigné par Kustomize
   secretObjects:
   - secretName: ocis-tls
@@ -39,13 +31,6 @@ spec:
     - objectName: ocis-tls-cert
       key: tls.crt
     - objectName: ocis-tls-key
-      key: tls.key
-  - secretName: keycloak-tls
-    type: kubernetes.io/tls
-    data:
-    - objectName: keycloak-tls-cert
-      key: tls.crt
-    - objectName: keycloak-tls-key
       key: tls.key
 ---
 # Pod temporaire pour monter les secrets et déclencher la synchronisation
