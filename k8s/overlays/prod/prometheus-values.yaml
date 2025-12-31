@@ -81,11 +81,11 @@ grafana:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
     hosts:
-      - grafana.DOMAIN_PLACEHOLDER
+      - grafana.prod.lesaiglesbraves.online
     tls:
       - secretName: grafana-tls
         hosts:
-          - grafana.DOMAIN_PLACEHOLDER
+          - grafana.prod.lesaiglesbraves.online
   
   # Default dashboards
   dashboardProviders:
