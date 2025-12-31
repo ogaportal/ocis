@@ -153,19 +153,28 @@
       args:
         chdir: "{{ playbook_dir }}/.."
 
-    - name: Wait for secrets-sync-pod to be running (required to trigger CSI sync)
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Pod
-        name: secrets-sync-pod
-        namespace: owncloud
-        kubeconfig: "{{ kubeconfig_path }}"
-      register: sync_pod_info
-      until: >
-        sync_pod_info.resources | length > 0 and
-        sync_pod_info.resources[0].status.phase == "Running"
-      retries: 20
-      delay: 10
+    - name: Check secrets-sync-pod status and events
+      ansible.builtin.shell: |
+        echo "=== Pod Status ==="
+        kubectl get pod secrets-sync-pod -n owncloud -o wide || echo "Pod not found"
+        echo ""
+        echo "=== Pod Description ==="
+        kubectl describe pod secrets-sync-pod -n owncloud || echo "Pod not found"
+        echo ""
+        echo "=== Recent Events ==="
+        kubectl get events -n owncloud --sort-by='.lastTimestamp' --field-selector involvedObject.name=secrets-sync-pod || echo "No events"
+        echo ""
+        echo "=== CSI Driver Pods ==="
+        kubectl get pods -n kube-system -l app=csi-secrets-store-provider-azure || echo "CSI driver not found"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: sync_pod_debug
+      ignore_errors: true
+
+    - name: Display sync pod diagnostics
+      ansible.builtin.debug:
+        msg: "{{ sync_pod_debug.stdout_lines }}"
+      when: sync_pod_debug.stdout_lines is defined
 
     - name: Wait for CSI SecretProviderClass to sync certificates from Key Vault
       kubernetes.core.k8s_info:
@@ -176,7 +185,7 @@
         kubeconfig: "{{ kubeconfig_path }}"
       register: cert_secret_info
       until: cert_secret_info.resources | length > 0
-      retries: 15
+      retries: 30
       delay: 20
       loop:
         - ocis-tls
