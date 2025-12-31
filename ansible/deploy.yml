@@ -153,6 +153,20 @@
       args:
         chdir: "{{ playbook_dir }}/.."
 
+    - name: Wait for secrets-sync-pod to be running (required to trigger CSI sync)
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        name: secrets-sync-pod
+        namespace: owncloud
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: sync_pod_info
+      until: >
+        sync_pod_info.resources | length > 0 and
+        sync_pod_info.resources[0].status.phase == "Running"
+      retries: 20
+      delay: 10
+
     - name: Wait for CSI SecretProviderClass to sync certificates from Key Vault
       kubernetes.core.k8s_info:
         api_version: v1
