@@ -573,17 +573,15 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Set Azure Subscription
-        run: |
-          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
       - name: Get AKS Credentials
         run: |
           ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
           CLUSTER_NAME="owncloud-aks-${ENVIRONMENT}"
           RESOURCE_GROUP="owncloud-rg-${ENVIRONMENT}"
+          SUBSCRIPTION_ID="${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}"
           
           echo "📡 Getting credentials for cluster: $CLUSTER_NAME"
+          az account set --subscription "$SUBSCRIPTION_ID"
           az aks get-credentials \
             --resource-group $RESOURCE_GROUP \
             --name $CLUSTER_NAME \
