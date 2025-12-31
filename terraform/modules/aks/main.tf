@@ -15,17 +15,25 @@ resource "azurerm_kubernetes_cluster" "aks" {
   kubernetes_version  = var.kubernetes_version
 
   default_node_pool {
-    name                = "default"
-    node_count          = var.node_count
-    vm_size             = var.vm_size
-    os_disk_size_gb     = 30
-    type                = "VirtualMachineScaleSets"
-    enable_auto_scaling = false
+    name                        = "default"
+    node_count                  = var.node_count
+    vm_size                     = var.vm_size
+    os_disk_size_gb             = 30
+    type                        = "VirtualMachineScaleSets"
+    enable_auto_scaling         = false
+    temporary_name_for_rotation = "tempnp"
+    
+    upgrade_settings {
+      max_surge = "1"
+    }
   }
 
   identity {
     type = "SystemAssigned"
   }
+
+  oidc_issuer_enabled       = true
+  workload_identity_enabled = true
 
   network_profile {
     network_plugin    = "azure"
@@ -44,6 +52,13 @@ resource "azurerm_kubernetes_cluster" "aks" {
 resource "azurerm_role_assignment" "aks_keyvault" {
   principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
   role_definition_name = "Key Vault Secrets User"
+  scope                = var.keyvault_id
+}
+
+# Grant AKS read access to Key Vault (for certificates)
+resource "azurerm_role_assignment" "aks_keyvault_reader" {
+  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  role_definition_name = "Key Vault Reader"
   scope                = var.keyvault_id
 }
 

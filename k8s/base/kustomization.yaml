@@ -5,41 +5,27 @@ namespace: owncloud
 
 resources:
   - namespace.yaml
-  - postgres.yaml
-  - keycloak.yaml
   - ocis.yaml
   - ingress.yaml
-  - secret-provider-class.yaml
+  - certificates-keyvault.yaml
 
 configMapGenerator:
-  - name: keycloak-config
-    literals:
-      - hostname=KEYCLOAK_HOSTNAME
-  
   - name: ocis-config
     literals:
       - ocis-url=https://OCIS_HOSTNAME
-      - oidc-issuer=https://KEYCLOAK_HOSTNAME/realms/owncloud
 
 secretGenerator:
-  - name: postgres-secret
-    literals:
-      - username=postgres
-      - password=POSTGRES_PASSWORD
-  
-  - name: keycloak-secret
-    literals:
-      - admin-username=admin
-      - admin-password=KEYCLOAK_ADMIN_PASSWORD
-  
   - name: ocis-secret
     literals:
       - admin-user-id=admin
       - admin-password=OCIS_ADMIN_PASSWORD
-      - oidc-client-id=ocis
-      - oidc-client-secret=OIDC_CLIENT_SECRET
+      - jwt-secret=OCIS_JWT_SECRET
+      - transfer-secret=OCIS_TRANSFER_SECRET
+      - machine-auth-api-key=OCIS_MACHINE_AUTH_API_KEY
+      - system-user-api-key=OCIS_SYSTEM_USER_API_KEY
   
   - name: azure-storage-secret
     literals:
       - account-name=STORAGE_ACCOUNT_NAME
       - account-key=STORAGE_ACCOUNT_KEY
+

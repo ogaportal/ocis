@@ -4,6 +4,36 @@ Ce dossier contient des scripts utilitaires pour gérer les certificats SSL/TLS 
 
 ## 📜 Scripts disponibles
 
+### ⭐ create-certificates-simple.ps1 (Windows - RECOMMANDÉ)
+
+Script PowerShell simplifié pour créer et uploader les certificats vers Azure Key Vault.
+
+**Usage** :
+```powershell
+.\create-certificates-simple.ps1 -Environment [dev|prod]
+```
+
+**Exemples** :
+```powershell
+# Créer et uploader les certificats pour dev
+.\create-certificates-simple.ps1 -Environment dev
+
+# Créer et uploader les certificats pour prod
+.\create-certificates-simple.ps1 -Environment prod
+```
+
+**Avantages** :
+- ✅ Simple et rapide
+- ✅ Gestion automatique des erreurs
+- ✅ Utilise OpenSSL de Git for Windows
+- ✅ Crée des fichiers PFX compatibles Azure
+- ✅ Nettoyage automatique
+
+**Prérequis** :
+- Azure CLI installé et connecté (`az login`)
+- Git for Windows (inclut OpenSSL)
+- Permissions "Key Vault Administrator" sur le Key Vault
+
 ### manage-certificates.sh (Linux/Mac)
 
 Script Bash pour gérer les certificats SSL/TLS dans Azure Key Vault.
