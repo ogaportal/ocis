@@ -1,0 +1,797 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  pull_request:
+    branches:
+      - develop
+      - main
+
+env:
+  TERRAFORM_VERSION: '1.6.0'
+  ANSIBLE_VERSION: '10.5.0'
+
+jobs:
+  # Job de build - Toujours exécuté (même dans les PRs)
+  build:
+    name: Build and Validate
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        run: |
+          echo "🔍 Checking Terraform format..."
+          terraform fmt -check -recursive terraform/
+        continue-on-error: true
+
+      - name: Terraform Validate (Dev)
+        working-directory: terraform/environments/dev
+        run: |
+          echo "✅ Validating Dev environment..."
+          terraform init -backend=false
+          terraform validate
+
+      - name: Terraform Validate (Prod)
+        working-directory: terraform/environments/prod
+        run: |
+          echo "✅ Validating Prod environment..."
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Kubernetes Manifests
+        run: |
+          echo "🔍 Validating Kubernetes manifests..."
+          
+          # Install kustomize
+          curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+          sudo mv kustomize /usr/local/bin/
+          
+          # Validate dev overlay
+          echo "Validating dev overlay..."
+          kustomize build k8s/overlays/dev > /dev/null
+          
+          # Validate prod overlay
+          echo "Validating prod overlay..."
+          kustomize build k8s/overlays/prod > /dev/null
+          
+          echo "✅ All manifests are valid"
+
+      - name: Validate Ansible Playbooks
+        run: |
+          echo "🔍 Validating Ansible playbooks..."
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          ansible-playbook ansible/deploy.yml --syntax-check
+          ansible-playbook ansible/destroy.yml --syntax-check
+          echo "✅ All playbooks are valid"
+
+      - name: Build Summary
+        run: |
+          echo "## 🎉 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Terraform configuration valid" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Kubernetes manifests valid" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Ansible playbooks valid" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "ℹ️ **Pull Request** - Deployment skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🚀 **Branch: ${{ github.ref_name }}** - Deployment will proceed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Détermine l'environnement basé sur la branche
+  set-environment:
+    name: Set Environment
+    runs-on: ubuntu-latest
+    # Seulement si pas une PR et branche develop ou main
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    needs: build
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+    
+    steps:
+      - name: Determine Environment
+        id: set-env
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+            echo "🌐 Environment: **Production**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "🧪 Environment: **Development**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Vérification et génération des certificats
+  check-certificates:
+    name: Check and Generate Certificates
+    runs-on: ubuntu-latest
+    needs: set-environment
+    # Seulement si pas une PR et branche develop ou main
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Check Certificates in Key Vault
+        id: check-certs
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          KEY_VAULT_NAME="owncloudkv${ENVIRONMENT}"
+          
+          echo "🔍 Checking certificates in Key Vault: $KEY_VAULT_NAME"
+          
+          # Vérifier si les certificats OCIS existent
+          OCIS_CERT=1
+          OCIS_KEY=0
+          
+          # Vérifier ocis-tls-cert
+          # if az keyvault certificate show --vault-name $KEY_VAULT_NAME --name ocis-tls-cert --query "name" -o tsv 2>/dev/null | grep -q "ocis-tls-cert"; then
+          #   OCIS_CERT=1
+          # fi
+          
+          # Vérifier ocis-tls-key
+          if az keyvault secret show --vault-name $KEY_VAULT_NAME --name ocis-tls-key --query "name" -o tsv 2>/dev/null | grep -q "ocis-tls-key"; then
+            OCIS_KEY=1
+          fi
+          
+          if [ "$OCIS_CERT" -gt 0 ] && [ "$OCIS_KEY" -gt 0 ]; then
+            echo "✅ All certificates already exist in Key Vault"
+            echo "  - ocis-tls-cert: Found"
+            echo "  - ocis-tls-key: Found"
+            echo "certificates_exist=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Some certificates are missing in Key Vault"
+            echo "  - ocis-tls-cert: $([ $OCIS_CERT -gt 0 ] && echo 'Found' || echo 'Missing')"
+            echo "  - ocis-tls-key: $([ $OCIS_KEY -gt 0 ] && echo 'Found' || echo 'Missing')"
+            echo "certificates_exist=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate Self-Signed Certificates
+        if: steps.check-certs.outputs.certificates_exist == 'false'
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          
+          if [ "$ENVIRONMENT" == "prod" ]; then
+            DOMAIN="prod.lesaiglesbraves.online"
+          else
+            DOMAIN="dev.lesaiglesbraves.online"
+          fi
+          
+          echo "🔐 Generating self-signed certificates for $DOMAIN"
+          
+          # Créer le répertoire pour les certificats
+          mkdir -p certs
+          
+          # Générer le certificat OCIS
+          echo "Generating OCIS certificate..."
+          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout certs/ocis-tls.key \
+            -out certs/ocis-tls.crt \
+            -subj "/C=FR/ST=France/L=Paris/O=OwnCloud/OU=IT/CN=$DOMAIN" \
+            -addext "subjectAltName=DNS:$DOMAIN,DNS:*.$DOMAIN"
+          
+          # Créer des fichiers PFX pour Azure Key Vault
+          echo "Creating PFX files..."
+          openssl pkcs12 -export -out certs/ocis-tls.pfx \
+            -inkey certs/ocis-tls.key -in certs/ocis-tls.crt -passout pass:
+          
+          echo "✅ Certificates generated successfully"
+
+      - name: Upload Certificates to Key Vault
+        if: steps.check-certs.outputs.certificates_exist == 'false'
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          KEY_VAULT_NAME="owncloudkv${ENVIRONMENT}"
+          
+          echo "📤 Uploading certificates to Key Vault: $KEY_VAULT_NAME"
+          
+          # Upload OCIS certificate
+          echo "Uploading OCIS certificate..."
+          az keyvault certificate import \
+            --vault-name $KEY_VAULT_NAME \
+            --name ocis-tls-cert \
+            --file certs/ocis-tls.pfx
+          
+          az keyvault secret set \
+            --vault-name $KEY_VAULT_NAME \
+            --name ocis-tls-key \
+            --file certs/ocis-tls.key \
+            --content-type "application/x-pem-file"
+          
+          echo "✅ All certificates uploaded successfully"
+          
+          # Nettoyer les fichiers locaux
+          rm -rf certs
+
+      - name: Certificate Summary
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "## 🔐 Certificate Status - $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.check-certs.outputs.certificates_exist }}" == "true" ]; then
+            echo "✅ Certificates already present in Key Vault" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🔐 New self-signed certificates generated and uploaded" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Déploiement Terraform
+  terraform:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: [set-environment, check-certificates]
+    # Seulement si pas une PR et branche develop ou main
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    environment: ${{ needs.set-environment.outputs.environment }}
+    env:
+      ARM_CLIENT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
+      ARM_CLIENT_SECRET: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
+      ARM_TENANT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}
+      ARM_SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ needs.set-environment.outputs.environment }}
+        run: |
+          echo "🔧 Initializing Terraform for ${{ needs.set-environment.outputs.environment }}..."
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            SA_NAME="owncloudsastateprod"
+          else
+            SA_NAME="owncloudsastatedev"
+          fi
+          terraform init \
+            -backend-config="storage_account_name=$SA_NAME" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=owncloud.tfstate"
+
+      - name: Terraform Plan
+        working-directory: terraform/environments/${{ needs.set-environment.outputs.environment }}
+        run: |
+          echo "📋 Creating Terraform plan..."
+          terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/${{ needs.set-environment.outputs.environment }}
+        run: |
+          echo "🚀 Applying Terraform plan..."
+          terraform apply -auto-approve tfplan
+
+      - name: Get AKS Credentials
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "🔑 Getting AKS credentials for $ENVIRONMENT..."
+          az aks get-credentials \
+            --resource-group owncloud-rg-$ENVIRONMENT \
+            --name owncloud-aks-$ENVIRONMENT \
+            --overwrite-existing
+
+      - name: Infrastructure Summary
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "## 🏗️ Infrastructure Deployed - $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ AKS Cluster: owncloud-aks-$ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Resource Group: owncloud-rg-$ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Key Vault: owncloudkv$ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Storage Account: owncloudstorages$ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+
+  # Déploiement des applications
+  deploy-apps:
+    name: Deploy Applications
+    runs-on: ubuntu-latest
+    needs: [set-environment, terraform]
+    # Seulement si pas une PR et branche develop ou main
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    environment: ${{ needs.set-environment.outputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Ansible
+        run: |
+          pip install ansible==${{ env.ANSIBLE_VERSION }}
+          ansible-galaxy collection install kubernetes.core
+          ansible-galaxy collection install azure.azcollection
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          az aks get-credentials \
+            --resource-group owncloud-rg-$ENVIRONMENT \
+            --name owncloud-aks-$ENVIRONMENT \
+            --overwrite-existing
+
+      - name: Clean up old resources
+        run: |
+          echo "🧹 Cleaning up old SecretProviderClass and secrets..."
+          
+          # Supprimer les anciennes SecretProviderClass (sauf ocis-keyvault-certs)
+          kubectl delete secretproviderclass ocis-tls -n owncloud --ignore-not-found=true
+          
+          # Supprimer le pod de sync s'il existe déjà
+          kubectl delete pod secrets-sync-pod -n owncloud --ignore-not-found=true
+          
+          # Attendre que les ressources soient supprimées
+          sleep 10
+          
+          echo "✅ Cleanup completed"
+
+      - name: Deploy Applications with Ansible
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "🚀 Deploying applications to $ENVIRONMENT..."
+          
+          ansible-playbook \
+            -i ansible/inventories/$ENVIRONMENT.yml \
+            ansible/deploy.yml \
+            -e "target_env=$ENVIRONMENT"
+
+      - name: Generate and Set Application Secrets
+        run: |
+          echo "🔐 Generating random secrets for applications..."
+          
+          # Attendre que le secret soit créé par Kustomize
+          echo "Waiting for ocis-secret to be created..."
+          SECRET_NAME=""
+          for i in {1..30}; do
+            SECRET_NAME=$(kubectl get secrets -n owncloud -o name | grep "secret/ocis-secret-" | head -n1 | cut -d'/' -f2)
+            if [ -n "$SECRET_NAME" ]; then
+              echo "✅ Secret found: $SECRET_NAME"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+          
+          # Vérifier que le secret existe
+          if [ -z "$SECRET_NAME" ]; then
+            echo "❌ Error: ocis-secret not found after waiting"
+            echo "Available secrets:"
+            kubectl get secrets -n owncloud
+            exit 1
+          fi
+          
+          # Générer des secrets aléatoires
+          JWT_SECRET=$(openssl rand -base64 32)
+          TRANSFER_SECRET=$(openssl rand -base64 32)
+          MACHINE_AUTH_API_KEY=$(openssl rand -base64 32)
+          SYSTEM_USER_API_KEY=$(openssl rand -base64 32)
+          OCIS_ADMIN_PASSWORD=$(openssl rand -base64 24)
+          
+          # Patcher le secret ocis-secret avec tous les secrets nécessaires
+          kubectl patch secret $SECRET_NAME -n owncloud --type='json' -p='[
+            {"op": "replace", "path": "/data/admin-password", "value": "'$(echo -n "$OCIS_ADMIN_PASSWORD" | base64 -w0)'"},
+            {"op": "replace", "path": "/data/jwt-secret", "value": "'$(echo -n "$JWT_SECRET" | base64 -w0)'"},
+            {"op": "replace", "path": "/data/transfer-secret", "value": "'$(echo -n "$TRANSFER_SECRET" | base64 -w0)'"},
+            {"op": "replace", "path": "/data/machine-auth-api-key", "value": "'$(echo -n "$MACHINE_AUTH_API_KEY" | base64 -w0)'"},
+            {"op": "replace", "path": "/data/system-user-api-key", "value": "'$(echo -n "$SYSTEM_USER_API_KEY" | base64 -w0)'"}
+          ]'
+          
+          echo "✅ Secrets generated and applied"
+          echo "⚠️ Save these credentials securely:"
+          echo "- OCIS Admin Password: $OCIS_ADMIN_PASSWORD"
+
+      - name: Wait for Deployments
+        run: |
+          echo "⏳ Waiting for secrets sync and applications to be ready..."
+          
+          # Afficher l'état actuel
+          echo ""
+          echo "=== Current pods status ==="
+          kubectl get pods -n owncloud
+          
+          echo ""
+          echo "=== Checking secrets ==="
+          kubectl get secrets -n owncloud
+          
+          echo ""
+          echo "=== Checking SecretProviderClass ==="
+          kubectl get secretproviderclass -n owncloud
+          
+          # Vérifier si le secrets-sync-pod existe et diagnostiquer
+          echo ""
+          echo "=== Diagnosing secrets-sync-pod ==="
+          if kubectl get pod secrets-sync-pod -n owncloud &>/dev/null; then
+            echo "Pod exists, checking status..."
+            kubectl describe pod secrets-sync-pod -n owncloud | grep -A 20 "Events:"
+            
+            # Si le pod est en erreur, afficher les logs
+            POD_STATUS=$(kubectl get pod secrets-sync-pod -n owncloud -o jsonpath='{.status.phase}')
+            echo "Pod status: $POD_STATUS"
+            
+            if [ "$POD_STATUS" != "Running" ]; then
+              echo ""
+              echo "⚠️ secrets-sync-pod is not running. Recent events:"
+              kubectl get events -n owncloud --field-selector involvedObject.name=secrets-sync-pod --sort-by='.lastTimestamp'
+            fi
+          else
+            echo "⚠️ secrets-sync-pod does not exist!"
+          fi
+          
+          # Attendre que les secrets TLS soient créés (max 5 minutes)
+          echo ""
+          echo "=== Waiting for TLS secrets to be created ==="
+          TIMEOUT=300
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            if kubectl get secret ocis-tls -n owncloud &>/dev/null; then
+              echo "✅ TLS secrets are ready!"
+              break
+            fi
+            echo "Waiting for secrets... (${ELAPSED}s/${TIMEOUT}s)"
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+          
+          if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "❌ Timeout waiting for TLS secrets!"
+            echo "Checking CSI driver logs..."
+            kubectl logs -n kube-system -l app=csi-secrets-store-provider-azure --tail=50 || echo "Could not get CSI driver logs"
+            exit 1
+          fi
+          
+          # Maintenant attendre que les applications soient prêtes
+          echo ""
+          echo "=== Waiting for application pods (timeout: 10 minutes) ==="
+          kubectl wait --for=condition=ready pod -l app=ocis -n owncloud --timeout=600s || echo "⚠️ OCIS timeout"
+          
+          # Afficher le statut final
+          echo ""
+          echo "=== Final pod status ==="
+          kubectl get pods -n owncloud
+          
+          # Afficher les logs des pods en erreur
+          echo ""
+          echo "=== Checking for pod errors ==="
+          FAILED_PODS=$(kubectl get pods -n owncloud --field-selector=status.phase!=Running,status.phase!=Succeeded -o name 2>/dev/null || echo "")
+          
+          if [ -n "$FAILED_PODS" ]; then
+            echo "⚠️ Some pods are not running:"
+            echo "$FAILED_PODS"
+            
+            for POD in $FAILED_PODS; do
+              POD_NAME=$(echo $POD | cut -d'/' -f2)
+              if [[ ! "$POD_NAME" =~ "secrets-sync-pod" ]]; then
+                echo ""
+                echo "--- Logs for $POD_NAME ---"
+                kubectl logs $POD_NAME -n owncloud --tail=50 || echo "Could not get logs"
+              fi
+            done
+            
+            echo ""
+            echo "--- Recent events ---"
+            kubectl get events -n owncloud --sort-by='.lastTimestamp' | tail -30
+          fi
+          
+          echo ""
+          echo "✅ Deployment check completed"
+          echo "✅ All pods are ready!"
+
+      - name: Get Service Information
+        id: service-info
+        run: |
+          echo "📊 Getting service information..."
+          
+          # Obtenir l'IP de l'Ingress
+          INGRESS_IP=$(kubectl get ingress -n owncloud owncloud-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "ingress_ip=$INGRESS_IP" >> $GITHUB_OUTPUT
+          
+          # Lister tous les pods
+          echo "### 📦 Deployed Pods" >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -n owncloud >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🌐 Services" >> $GITHUB_STEP_SUMMARY
+          kubectl get services -n owncloud >> $GITHUB_STEP_SUMMARY
+
+      - name: Verify Certificate from Key Vault
+        run: |
+          echo "🔍 Verifying certificate synchronization from Key Vault..."
+          
+          # Vérifier que le secret ocis-tls existe (créé par CSI driver depuis Key Vault)
+          if kubectl get secret ocis-tls -n owncloud &>/dev/null; then
+            echo "✅ Certificate ocis-tls found (synced from Key Vault)"
+            
+            # Afficher les détails du secret
+            kubectl get secret ocis-tls -n owncloud -o jsonpath='{.metadata.creationTimestamp}' | xargs -I {} echo "Created: {}"
+          else
+            echo "❌ Certificate ocis-tls not found!"
+            echo "This certificate should be synced from Azure Key Vault via CSI driver"
+            exit 1
+          fi
+
+      - name: Certificate Status Summary
+        if: always()
+        run: |
+          echo "## 🔐 Certificate Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if kubectl get secret ocis-tls -n owncloud &>/dev/null; then
+            echo "✅ **Self-signed certificate synced from Azure Key Vault**" >> $GITHUB_STEP_SUMMARY
+            CREATED=$(kubectl get secret ocis-tls -n owncloud -o jsonpath='{.metadata.creationTimestamp}')
+            echo "- Created: $CREATED" >> $GITHUB_STEP_SUMMARY
+            echo "- Source: Azure Key Vault via CSI driver" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Certificate not found**" >> $GITHUB_STEP_SUMMARY
+            echo "- Check Key Vault configuration and CSI driver" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Deployment Summary
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          INGRESS_IP="${{ steps.service-info.outputs.ingress_ip }}"
+          
+          if [ "$ENVIRONMENT" == "prod" ]; then
+            DOMAIN="prod.lesaiglesbraves.online"
+          else
+            DOMAIN="dev.lesaiglesbraves.online"
+          fi
+          
+          echo "## 🎉 Deployment Successful - $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🌐 Access Information" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Domain**: https://$DOMAIN" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ingress IP**: $INGRESS_IP" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. Update DNS record to point $DOMAIN to $INGRESS_IP" >> $GITHUB_STEP_SUMMARY
+          echo "2. Access ownCloud OCIS at https://$DOMAIN" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Note**: Using self-signed certificate from Azure Key Vault. Your browser will show a security warning." >> $GITHUB_STEP_SUMMARY
+
+  # Job de test de charge - Uniquement en production
+  load-test:
+    name: Load Testing (Production Only)
+    runs-on: ubuntu-latest
+    needs: [set-environment, deploy-apps]
+    if: |
+      github.event_name != 'pull_request' && 
+      github.ref == 'refs/heads/main' &&
+      needs.set-environment.outputs.environment == 'prod'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'scripts/requirements-locust.txt'
+
+      - name: Install Locust
+        run: |
+          echo "📦 Installing Locust and dependencies..."
+          pip install -r scripts/requirements-locust.txt
+
+      - name: Configure Test Environment
+        id: test-config
+        run: |
+          DOMAIN="prod.lesaiglesbraves.online"
+          echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+          echo "🎯 Target: https://$DOMAIN"
+
+      - name: Wait for Application Readiness
+        run: |
+          DOMAIN="${{ steps.test-config.outputs.domain }}"
+          echo "⏳ Waiting for application to be ready..."
+          
+          MAX_RETRIES=30
+          RETRY_COUNT=0
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -k -s -f -o /dev/null -w "%{http_code}" "https://$DOMAIN" | grep -q "200\|301\|302\|307\|308"; then
+              echo "✅ Application is responding"
+              break
+            fi
+            
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "⏳ Attempt $RETRY_COUNT/$MAX_RETRIES - Waiting 10s..."
+            sleep 10
+          done
+          
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "❌ Application did not become ready in time"
+            exit 1
+          fi
+
+      - name: Run Load Test
+        id: load-test
+        run: |
+          DOMAIN="${{ steps.test-config.outputs.domain }}"
+          
+          echo "🚀 Starting load test against https://$DOMAIN"
+          echo ""
+          echo "Test Configuration:"
+          echo "- Users: 50 concurrent users"
+          echo "- Spawn rate: 5 users/second"
+          echo "- Duration: 2 minutes"
+          echo "- Success criteria: <5% failure rate, <3000ms avg response time"
+          echo ""
+          
+          # Run Locust in headless mode
+          locust \
+            -f scripts/locustfile.py \
+            --host "https://$DOMAIN" \
+            --users 50 \
+            --spawn-rate 5 \
+            --run-time 2m \
+            --headless \
+            --html reports/load-test-report.html \
+            --csv reports/load-test \
+            --exit-code-on-error 0 \
+            || echo "test_failed=true" >> $GITHUB_OUTPUT
+          
+          # Create reports directory if it doesn't exist
+          mkdir -p reports
+
+      - name: Parse Test Results
+        if: always()
+        id: results
+        run: |
+          if [ -f "reports/load-test_stats.csv" ]; then
+            echo "📊 Parsing test results..."
+            
+            # Extract key metrics from CSV
+            TOTAL_REQUESTS=$(tail -n 1 reports/load-test_stats.csv | cut -d',' -f3 | tr -d '"')
+            TOTAL_FAILURES=$(tail -n 1 reports/load-test_stats.csv | cut -d',' -f4 | tr -d '"')
+            AVG_RESPONSE=$(tail -n 1 reports/load-test_stats.csv | cut -d',' -f6 | tr -d '"')
+            
+            # Calculate failure rate
+            if [ "$TOTAL_REQUESTS" -gt 0 ]; then
+              FAILURE_RATE=$(awk "BEGIN {printf \"%.2f\", ($TOTAL_FAILURES / $TOTAL_REQUESTS) * 100}")
+            else
+              FAILURE_RATE="0.00"
+            fi
+            
+            echo "total_requests=$TOTAL_REQUESTS" >> $GITHUB_OUTPUT
+            echo "total_failures=$TOTAL_FAILURES" >> $GITHUB_OUTPUT
+            echo "failure_rate=$FAILURE_RATE" >> $GITHUB_OUTPUT
+            echo "avg_response=$AVG_RESPONSE" >> $GITHUB_OUTPUT
+            
+            # Determine pass/fail
+            PASSED=true
+            if (( $(echo "$FAILURE_RATE > 5.0" | bc -l) )); then
+              PASSED=false
+            fi
+            if (( $(echo "$AVG_RESPONSE > 3000" | bc -l) )); then
+              PASSED=false
+            fi
+            
+            echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Results file not found"
+            echo "passed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-reports
+          path: reports/
+          retention-days: 30
+
+      - name: Load Test Summary
+        if: always()
+        run: |
+          DOMAIN="${{ steps.test-config.outputs.domain }}"
+          TOTAL_REQUESTS="${{ steps.results.outputs.total_requests }}"
+          TOTAL_FAILURES="${{ steps.results.outputs.total_failures }}"
+          FAILURE_RATE="${{ steps.results.outputs.failure_rate }}"
+          AVG_RESPONSE="${{ steps.results.outputs.avg_response }}"
+          PASSED="${{ steps.results.outputs.passed }}"
+          
+          echo "## 📊 Load Test Results - Production" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Test Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target**: https://$DOMAIN" >> $GITHUB_STEP_SUMMARY
+          echo "- **Concurrent Users**: 50" >> $GITHUB_STEP_SUMMARY
+          echo "- **Test Duration**: 2 minutes" >> $GITHUB_STEP_SUMMARY
+          echo "- **Spawn Rate**: 5 users/second" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Requests | $TOTAL_REQUESTS | ℹ️ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed Requests | $TOTAL_FAILURES | ℹ️ |" >> $GITHUB_STEP_SUMMARY
+          
+          if (( $(echo "$FAILURE_RATE <= 5.0" | bc -l) )); then
+            echo "| Failure Rate | $FAILURE_RATE% | ✅ (threshold: <5%) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Failure Rate | $FAILURE_RATE% | ❌ (threshold: <5%) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if (( $(echo "$AVG_RESPONSE <= 3000" | bc -l) )); then
+            echo "| Avg Response Time | ${AVG_RESPONSE}ms | ✅ (threshold: <3000ms) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Avg Response Time | ${AVG_RESPONSE}ms | ❌ (threshold: <3000ms) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$PASSED" == "true" ]; then
+            echo "### ✅ Load Test PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The application successfully handled 50 concurrent users with acceptable performance." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Load Test FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The application did not meet performance criteria. Please review the detailed reports." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📄 **Detailed HTML report available in artifacts**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail on Test Failure
+        if: steps.results.outputs.passed == 'false'
+        run: |
+          echo "❌ Load test failed - performance criteria not met"
+          exit 1
+
+  # Job de nettoyage en cas d'échec
+  cleanup-on-failure:
+    name: Cleanup on Failure
+    runs-on: ubuntu-latest
+    needs: [set-environment, terraform, deploy-apps]
+    if: failure() && github.event_name != 'pull_request' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+    
+    steps:
+      - name: Failure Notification
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "## ❌ Deployment Failed - $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The deployment has failed. Please check the logs above for details." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Troubleshooting Steps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check Terraform output for infrastructure errors" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify Azure credentials and permissions" >> $GITHUB_STEP_SUMMARY
+          echo "3. Check Ansible playbook logs for application deployment errors" >> $GITHUB_STEP_SUMMARY
+          echo "4. Review Kubernetes events: \`kubectl get events -n owncloud\`" >> $GITHUB_STEP_SUMMARY
