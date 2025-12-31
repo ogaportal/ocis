@@ -153,42 +153,41 @@
       args:
         chdir: "{{ playbook_dir }}/.."
 
-    - name: Check secrets-sync-pod status and events
-      ansible.builtin.shell: |
-        echo "=== Pod Status ==="
-        kubectl get pod secrets-sync-pod -n owncloud -o wide || echo "Pod not found"
-        echo ""
-        echo "=== Pod Description ==="
-        kubectl describe pod secrets-sync-pod -n owncloud || echo "Pod not found"
-        echo ""
-        echo "=== Recent Events ==="
-        kubectl get events -n owncloud --sort-by='.lastTimestamp' --field-selector involvedObject.name=secrets-sync-pod || echo "No events"
-        echo ""
-        echo "=== CSI Driver Pods ==="
-        kubectl get pods -n kube-system -l app=csi-secrets-store-provider-azure || echo "CSI driver not found"
-      environment:
-        KUBECONFIG: "{{ kubeconfig_path }}"
-      register: sync_pod_debug
-      ignore_errors: true
-
-    - name: Display sync pod diagnostics
-      ansible.builtin.debug:
-        msg: "{{ sync_pod_debug.stdout_lines }}"
-      when: sync_pod_debug.stdout_lines is defined
-
-    - name: Wait for CSI SecretProviderClass to sync certificates from Key Vault
+    - name: Wait for OCIS pod to be ready (this triggers CSI certificate sync)
       kubernetes.core.k8s_info:
         api_version: v1
-        kind: Secret
-        name: "{{ item }}"
+        kind: Pod
         namespace: owncloud
+        label_selectors:
+          - app=ocis
         kubeconfig: "{{ kubeconfig_path }}"
-      register: cert_secret_info
-      until: cert_secret_info.resources | length > 0
+      register: ocis_pod_info
+      until: >
+        ocis_pod_info.resources | length > 0 and
+        ocis_pod_info.resources[0].status.phase == "Running"
       retries: 30
       delay: 20
-      loop:
-        - ocis-tls
+      failed_when: false
+
+    - name: Display OCIS pod status for debugging
+      ansible.builtin.shell: |
+        echo "=== OCIS Pod Status ==="
+        kubectl get pods -n owncloud -l app=ocis
+        echo ""
+        echo "=== OCIS Pod Events ==="
+        kubectl get events -n owncloud --sort-by='.lastTimestamp' --field-selector involvedObject.kind=Pod | grep ocis || echo "No events"
+        echo ""
+        echo "=== Secrets in namespace ==="
+        kubectl get secrets -n owncloud
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: ocis_debug
+      when: ocis_pod_info.resources | length == 0 or ocis_pod_info.resources[0].status.phase != "Running"
+
+    - name: Display OCIS diagnostics
+      ansible.builtin.debug:
+        msg: "{{ ocis_debug.stdout_lines }}"
+      when: ocis_debug.stdout_lines is defined
 
     # - name: Wait for Keycloak to be ready
     #   kubernetes.core.k8s_info:
