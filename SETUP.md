@@ -115,7 +115,7 @@ Créez un compte de stockage pour stocker le state Terraform :
 ```bash
 # Créer un compte de stockage
 az storage account create \
-  --name owncloudtfstatedev \
+  --name owncloudsastatedev \
   --resource-group owncloud-rg-dev \
   --location westeurope \
   --sku Standard_LRS
@@ -123,7 +123,7 @@ az storage account create \
 # Créer un container
 az storage container create \
   --name tfstate \
-  --account-name owncloudtfstatedev
+  --account-name owncloudsastatedev
 ```
 
 ### Prod
@@ -131,7 +131,7 @@ az storage container create \
 ```bash
 # Créer un compte de stockage
 az storage account create \
-  --name owncloudtfstateprod \
+  --name owncloudsastateprod \
   --resource-group owncloud-rg-prod \
   --location westeurope \
   --sku Standard_LRS
@@ -139,7 +139,7 @@ az storage account create \
 # Créer un container
 az storage container create \
   --name tfstate \
-  --account-name owncloudtfstateprod
+  --account-name owncloudsastateprod
 ```
 
 ## 3. Obtenir le Tenant ID Azure

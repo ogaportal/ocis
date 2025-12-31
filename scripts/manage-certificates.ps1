@@ -34,59 +34,79 @@ function Write-ErrorMsg {
     exit 1
 }
 
-# Fonction pour vérifier les prérequis
+# Fonction pour verifier les prerequis
 function Test-Prerequisites {
-    Write-Info "Vérification des prérequis..."
+    Write-Info "Verification des prerequis..."
     
-    # Vérifier Azure CLI
+    # Verifier Azure CLI
     if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
-        Write-ErrorMsg "Azure CLI n'est pas installé. Installez-le depuis: https://docs.microsoft.com/cli/azure/install-azure-cli"
+        Write-ErrorMsg "Azure CLI n'est pas installe. Installez-le depuis: https://docs.microsoft.com/cli/azure/install-azure-cli"
     }
     
-    # Vérifier OpenSSL
-    if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
-        Write-ErrorMsg "OpenSSL n'est pas installé. Installez-le depuis: https://slproweb.com/products/Win32OpenSSL.html"
+    # Verifier OpenSSL - chercher dans plusieurs emplacements
+    $script:opensslCmd = $null
+    
+    # 1. Chercher dans le PATH
+    $script:opensslCmd = Get-Command openssl -ErrorAction SilentlyContinue
+    
+    # 2. Chercher dans Git for Windows
+    if (-not $script:opensslCmd) {
+        $gitPath = Get-Command git -ErrorAction SilentlyContinue
+        if ($gitPath) {
+            $gitBinPath = Split-Path -Parent $gitPath.Source
+            $gitOpenSSLPath = Join-Path (Split-Path -Parent $gitBinPath) 'usr\bin\openssl.exe'
+            if (Test-Path $gitOpenSSLPath) {
+                Write-Info "OpenSSL trouve dans Git: $gitOpenSSLPath"
+                # Ajouter au PATH pour cette session
+                $env:Path = "$env:Path;$(Split-Path -Parent $gitOpenSSLPath)"
+                $script:opensslCmd = Get-Command openssl -ErrorAction SilentlyContinue
+            }
+        }
     }
     
-    # Vérifier la connexion Azure
+    if (-not $script:opensslCmd) {
+        Write-ErrorMsg "OpenSSL n'est pas installe. Installez-le depuis: https://slproweb.com/products/Win32OpenSSL.html ou utilisez Git for Windows"
+    }
+    
+    # Verifier la connexion Azure
     $account = az account show 2>$null
     if (-not $account) {
-        Write-ErrorMsg "Vous n'êtes pas connecté à Azure. Exécutez: az login"
+        Write-ErrorMsg "Vous n'etes pas connecte a Azure. Executez: az login"
     }
     
-    Write-Info "✓ Tous les prérequis sont satisfaits"
+    Write-Info "Tous les prerequis sont satisfaits"
 }
 
-# Fonction pour générer les certificats auto-signés
+# Fonction pour generer les certificats auto-signes
 function New-Certificates {
     param(
         [string]$Domain
     )
     
-    Write-Info "Génération des certificats pour le domaine: $Domain"
+    Write-Info "Generation des certificats pour le domaine: $Domain"
     
     $CertDir = ".\certs"
     
-    # Créer le répertoire pour les certificats
+    # Creer le repertoire pour les certificats
     New-Item -ItemType Directory -Force -Path $CertDir | Out-Null
     
-    # Générer le certificat Keycloak
-    Write-Info "Génération du certificat Keycloak..."
+    # Generer le certificat Keycloak
+    Write-Info "Generation du certificat Keycloak..."
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 `
         -keyout "$CertDir\keycloak-tls-key.pem" `
         -out "$CertDir\keycloak-tls-cert.pem" `
         -subj "/C=FR/ST=France/L=Paris/O=OwnCloud/OU=IT/CN=$Domain" `
         -addext "subjectAltName=DNS:$Domain,DNS:*.$Domain" 2>$null
     
-    # Générer le certificat OCIS
-    Write-Info "Génération du certificat OCIS..."
+    # Generer le certificat OCIS
+    Write-Info "Generation du certificat OCIS..."
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 `
         -keyout "$CertDir\ocis-tls-key.pem" `
         -out "$CertDir\ocis-tls-cert.pem" `
         -subj "/C=FR/ST=France/L=Paris/O=OwnCloud/OU=IT/CN=$Domain" `
         -addext "subjectAltName=DNS:$Domain,DNS:*.$Domain" 2>$null
     
-    Write-Info "✓ Certificats générés avec succès dans $CertDir"
+    Write-Info "Certificats generes avec succes dans $CertDir"
 }
 
 # Fonction pour uploader les certificats vers Azure Key Vault
@@ -125,11 +145,11 @@ function Upload-Certificates {
         --file "$CertDir\ocis-tls-key.pem" `
         --content-type "application/x-pem-file" | Out-Null
     
-    Write-Info "✓ Certificats uploadés avec succès"
+    Write-Info "Certificats uploades avec succes"
     
     # Nettoyer les fichiers temporaires
     Remove-Item -Recurse -Force $CertDir
-    Write-Info "✓ Fichiers temporaires nettoyés"
+    Write-Info "Fichiers temporaires nettoyes"
 }
 
 # Fonction pour supprimer les certificats d'Azure Key Vault
@@ -158,27 +178,27 @@ function Remove-Certificates {
         --vault-name $KeyVault `
         --name ocis-tls-key 2>$null | Out-Null
     
-    Write-Info "✓ Certificats supprimés"
+    Write-Info "Certificats supprimes"
 }
 
-# Fonction pour vérifier les certificats dans Azure Key Vault
+# Fonction pour verifier les certificats dans Azure Key Vault
 function Test-Certificates {
     param(
         [string]$KeyVault
     )
     
-    Write-Info "Vérification des certificats dans Key Vault: $KeyVault"
+    Write-Info "Verification des certificats dans Key Vault: $KeyVault"
     
     Write-Host "`n=== Certificats ===" -ForegroundColor Cyan
     az keyvault certificate list `
         --vault-name $KeyVault `
-        --query "[?starts_with(name, 'keycloak-tls') || starts_with(name, 'ocis-tls')].{Name:name, Enabled:attributes.enabled, Expires:attributes.expires}" `
+        --query '[?starts_with(name, `keycloak-tls`) || starts_with(name, `ocis-tls`)].{Name:name, Enabled:attributes.enabled, Expires:attributes.expires}' `
         --output table
     
     Write-Host "`n=== Secrets (Clés privées) ===" -ForegroundColor Cyan
     az keyvault secret list `
         --vault-name $KeyVault `
-        --query "[?starts_with(name, 'keycloak-tls') || starts_with(name, 'ocis-tls')].{Name:name, Enabled:attributes.enabled, Expires:attributes.expires}" `
+        --query '[?starts_with(name, `keycloak-tls`) || starts_with(name, `ocis-tls`)].{Name:name, Enabled:attributes.enabled, Expires:attributes.expires}' `
         --output table
 }
 
@@ -199,22 +219,22 @@ Test-Prerequisites
 
 # Exécuter l'action demandée
 switch ($Action) {
-    "create" {
+    'create' {
         New-Certificates -Domain $Domain
         Upload-Certificates -KeyVault $KeyVault
         Test-Certificates -KeyVault $KeyVault
-        Write-Info "✓ Création des certificats terminée avec succès!"
+        Write-Info "Creation des certificats terminee avec succes!"
     }
-    "delete" {
-        $confirmation = Read-Host "Êtes-vous sûr de vouloir supprimer les certificats? (y/N)"
+    'delete' {
+        $confirmation = Read-Host "Etes-vous sur de vouloir supprimer les certificats? (y/N)"
         if ($confirmation -eq 'y' -or $confirmation -eq 'Y') {
             Remove-Certificates -KeyVault $KeyVault
-            Write-Info "✓ Suppression des certificats terminée"
+            Write-Info "Suppression des certificats terminee"
         } else {
-            Write-Info "Opération annulée"
+            Write-Info "Operation annulee"
         }
     }
-    "verify" {
+    'verify' {
         Test-Certificates -KeyVault $KeyVault
     }
 }

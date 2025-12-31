@@ -19,6 +19,11 @@ output "kubelet_identity_object_id" {
   value       = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
 }
 
+output "kubelet_identity_client_id" {
+  description = "Client ID of the kubelet identity"
+  value       = azurerm_kubernetes_cluster.aks.kubelet_identity[0].client_id
+}
+
 output "storage_account_name" {
   description = "Name of the storage account"
   value       = azurerm_storage_account.ocis.name

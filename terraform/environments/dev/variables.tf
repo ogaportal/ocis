@@ -4,16 +4,17 @@ variable "location" {
   default     = "westeurope"
 }
 
+
 variable "kubernetes_version" {
   description = "Kubernetes version for AKS"
   type        = string
-  default     = "1.28.3"
+  default     = "1.34.0"
 }
 
 variable "node_count" {
   description = "Number of nodes in the AKS cluster"
   type        = number
-  default     = 1
+  default     = 2
 }
 
 variable "vm_size" {

@@ -6,6 +6,8 @@
 
 #### Workflow GitHub Actions : `manage-certificates.yml`
 - **Emplacement** : `.github/workflows/manage-certificates.yml`
+
+
 - **Fonctionnalités** :
   - ✅ Création de certificats auto-signés pour dev/prod
   - ✅ Upload automatique vers Azure Key Vault

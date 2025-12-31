@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-bases:
+resources:
   - ../../base
 
 namespace: owncloud
@@ -9,18 +9,7 @@ namespace: owncloud
 patches:
   - target:
       kind: Ingress
-      name: keycloak-ingress
-    patch: |-
-      - op: replace
-        path: /spec/tls/0/hosts/0
-        value: prod.lesaiglesbraves.online
-      - op: replace
-        path: /spec/rules/0/host
-        value: prod.lesaiglesbraves.online
-  
-  - target:
-      kind: Ingress
-      name: ocis-ingress
+      name: owncloud-ingress
     patch: |-
       - op: replace
         path: /spec/tls/0/hosts/0
@@ -31,28 +20,27 @@ patches:
   
   - target:
       kind: SecretProviderClass
-      name: keycloak-tls
+      name: ocis-keyvault-certs
     patch: |-
       - op: replace
         path: /spec/parameters/keyvaultName
         value: owncloudkvprod
-  
-  - target:
-      kind: SecretProviderClass
-      name: ocis-tls
-    patch: |-
       - op: replace
-        path: /spec/parameters/keyvaultName
-        value: owncloudkvprod
+        path: /spec/parameters/tenantId
+        value: adb4b793-234b-4db7-8a27-1eb5a79637e2
+      - op: replace
+        path: /spec/parameters/userAssignedIdentityID
+        value: 14d82c77-2dd4-4932-84e4-51ed88896ccc
 
 configMapGenerator:
-  - name: keycloak-config
-    behavior: merge
-    literals:
-      - hostname=prod.lesaiglesbraves.online
-  
   - name: ocis-config
     behavior: merge
     literals:
       - ocis-url=https://prod.lesaiglesbraves.online
-      - oidc-issuer=https://prod.lesaiglesbraves.online/realms/owncloud
+
+secretGenerator:
+  - name: ocis-secret
+    behavior: merge
+    literals:
+      - admin-password=PROD_ADMIN_PASSWORD_PLACEHOLDER
+      - admin-email=stephane.nzali@gmail.com
