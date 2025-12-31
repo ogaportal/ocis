@@ -143,7 +143,7 @@
             msg:
               - "✅ Prometheus stack deployed successfully"
               - "Grafana will be available at https://grafana.{{ ocis_hostname }}"
-              - "Default Grafana credentials: admin / ChangeThisPassword123!"
+              - "Default Grafana credentials: admin / 5T3phane"
 
     - name: Apply Kubernetes manifests with Kustomize
       ansible.builtin.command:
