@@ -13,7 +13,7 @@ variable "kubernetes_version" {
 variable "node_count" {
   description = "Number of nodes in the AKS cluster"
   type        = number
-  default     = 1
+  default     = 2  # Increased for Prometheus + OCIS workload
 }
 
 variable "vm_size" {

@@ -413,12 +413,30 @@ jobs:
 
       - name: Wait for Deployments
         run: |
-          echo "⏳ Waiting for secrets sync and applications to be ready..."
+          echo "⏳ Waiting for applications to be ready..."
           
           # Afficher l'état actuel
           echo ""
           echo "=== Current pods status ==="
-          kubectl get pods -n owncloud
+          kubectl get pods -n owncloud -o wide
+          
+          echo ""
+          echo "=== Node resources ==="
+          kubectl top nodes || echo "Metrics not available"
+          kubectl describe nodes | grep -A 5 "Allocated resources:" || echo "Could not get node resources"
+          
+          echo ""
+          echo "=== Checking OCIS pod ==="
+          OCIS_POD=$(kubectl get pod -n owncloud -l app=ocis -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          
+          if [ -n "$OCIS_POD" ]; then
+            echo "OCIS pod: $OCIS_POD"
+            kubectl describe pod $OCIS_POD -n owncloud | grep -A 30 "Events:"
+          else
+            echo "⚠️ No OCIS pod found!"
+            echo "Recent deployment events:"
+            kubectl get events -n owncloud --sort-by='.lastTimestamp' | tail -20
+          fi
           
           echo ""
           echo "=== Checking secrets ==="
@@ -426,82 +444,37 @@ jobs:
           
           echo ""
           echo "=== Checking SecretProviderClass ==="
-          kubectl get secretproviderclass -n owncloud
+          kubectl get secretproviderclass -n owncloud -o yaml
           
-          # Vérifier si le secrets-sync-pod existe et diagnostiquer
+          # Attendre que le pod OCIS soit prêt (cela déclenchera le CSI sync)
           echo ""
-          echo "=== Diagnosing secrets-sync-pod ==="
-          if kubectl get pod secrets-sync-pod -n owncloud &>/dev/null; then
-            echo "Pod exists, checking status..."
-            kubectl describe pod secrets-sync-pod -n owncloud | grep -A 20 "Events:"
-            
-            # Si le pod est en erreur, afficher les logs
-            POD_STATUS=$(kubectl get pod secrets-sync-pod -n owncloud -o jsonpath='{.status.phase}')
-            echo "Pod status: $POD_STATUS"
-            
-            if [ "$POD_STATUS" != "Running" ]; then
-              echo ""
-              echo "⚠️ secrets-sync-pod is not running. Recent events:"
-              kubectl get events -n owncloud --field-selector involvedObject.name=secrets-sync-pod --sort-by='.lastTimestamp'
-            fi
-          else
-            echo "⚠️ secrets-sync-pod does not exist!"
-          fi
-          
-          # Attendre que les secrets TLS soient créés (max 5 minutes)
-          echo ""
-          echo "=== Waiting for TLS secrets to be created ==="
-          TIMEOUT=300
-          ELAPSED=0
-          while [ $ELAPSED -lt $TIMEOUT ]; do
-            if kubectl get secret ocis-tls -n owncloud &>/dev/null; then
-              echo "✅ TLS secrets are ready!"
-              break
-            fi
-            echo "Waiting for secrets... (${ELAPSED}s/${TIMEOUT}s)"
-            sleep 10
-            ELAPSED=$((ELAPSED + 10))
-          done
-          
-          if [ $ELAPSED -ge $TIMEOUT ]; then
-            echo "❌ Timeout waiting for TLS secrets!"
-            echo "Checking CSI driver logs..."
-            kubectl logs -n kube-system -l app=csi-secrets-store-provider-azure --tail=50 || echo "Could not get CSI driver logs"
+          echo "=== Waiting for OCIS pod to be ready (timeout: 10 minutes) ==="
+          kubectl wait --for=condition=ready pod -l app=ocis -n owncloud --timeout=600s || {
+            echo "⚠️ OCIS pod not ready, checking status..."
+            kubectl describe pod -n owncloud -l app=ocis
+            kubectl get events -n owncloud --sort-by='.lastTimestamp' | tail -30
             exit 1
+          }
+          
+          # Vérifier si le secret TLS a été créé
+          echo ""
+          echo "=== Checking TLS secret ==="
+          if kubectl get secret ocis-tls -n owncloud &>/dev/null; then
+            echo "✅ TLS secret created by CSI driver!"
+          else
+            echo "⚠️ TLS secret not found (this is OK if using direct volume mount)"
           fi
           
-          # Maintenant attendre que les applications soient prêtes
+          # Afficher le statut final
           echo ""
-          echo "=== Waiting for application pods (timeout: 10 minutes) ==="
+          echo "=== Final pod status ==="
+          kubectl get pods -n owncloud -o wide
           kubectl wait --for=condition=ready pod -l app=ocis -n owncloud --timeout=600s || echo "⚠️ OCIS timeout"
           
           # Afficher le statut final
           echo ""
           echo "=== Final pod status ==="
-          kubectl get pods -n owncloud
-          
-          # Afficher les logs des pods en erreur
-          echo ""
-          echo "=== Checking for pod errors ==="
-          FAILED_PODS=$(kubectl get pods -n owncloud --field-selector=status.phase!=Running,status.phase!=Succeeded -o name 2>/dev/null || echo "")
-          
-          if [ -n "$FAILED_PODS" ]; then
-            echo "⚠️ Some pods are not running:"
-            echo "$FAILED_PODS"
-            
-            for POD in $FAILED_PODS; do
-              POD_NAME=$(echo $POD | cut -d'/' -f2)
-              if [[ ! "$POD_NAME" =~ "secrets-sync-pod" ]]; then
-                echo ""
-                echo "--- Logs for $POD_NAME ---"
-                kubectl logs $POD_NAME -n owncloud --tail=50 || echo "Could not get logs"
-              fi
-            done
-            
-            echo ""
-            echo "--- Recent events ---"
-            kubectl get events -n owncloud --sort-by='.lastTimestamp' | tail -30
-          fi
+          kubectl get pods -n owncloud -o wide
           
           echo ""
           echo "✅ Deployment check completed"
@@ -513,7 +486,7 @@ jobs:
           echo "📊 Getting service information..."
           
           # Obtenir l'IP de l'Ingress
-          INGRESS_IP=$(kubectl get ingress -n owncloud owncloud-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          INGRESS_IP=$(kubectl get ingress -n owncloud ocis-ingress -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "N/A")
           echo "ingress_ip=$INGRESS_IP" >> $GITHUB_OUTPUT
           
           # Lister tous les pods
