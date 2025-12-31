@@ -93,7 +93,7 @@ spec:
           driver: secrets-store.csi.k8s.io
           readOnly: true
           volumeAttributes:
-            secretProviderClass: "ocis-tls"
+            secretProviderClass: "ocis-keyvault-certs"
       - name: config
         emptyDir: {}
 ---
