@@ -568,6 +568,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set Azure Subscription
+        run: |
+          az account set --subscription ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get AKS Credentials
+        run: |
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          CLUSTER_NAME="owncloud-aks-${ENVIRONMENT}"
+          RESOURCE_GROUP="owncloud-rg-${ENVIRONMENT}"
+          
+          echo "📡 Getting credentials for cluster: $CLUSTER_NAME"
+          az aks get-credentials \
+            --resource-group $RESOURCE_GROUP \
+            --name $CLUSTER_NAME \
+            --overwrite-existing
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
