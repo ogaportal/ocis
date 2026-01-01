@@ -11,6 +11,19 @@ spec:
       storage: 1Gi
   storageClassName: default
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ocis-data-pvc
+  namespace: owncloud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: managed-premium
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,6 +39,10 @@ spec:
       labels:
         app: ocis
     spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
       - name: ocis
         image: owncloud/ocis:latest
@@ -415,7 +432,8 @@ spec:
         secret:
           secretName: ocis-tls
       - name: data
-        emptyDir: {}
+        persistentVolumeClaim:
+          claimName: ocis-data-pvc
       - name: secrets-store
         csi:
           driver: secrets-store.csi.k8s.io

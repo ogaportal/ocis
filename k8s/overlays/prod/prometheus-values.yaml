@@ -81,11 +81,11 @@ grafana:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
     hosts:
-      - grafana.DOMAIN_PLACEHOLDER
+      - grafana.prod.lesaiglesbraves.online
     tls:
       - secretName: grafana-tls
         hosts:
-          - grafana.DOMAIN_PLACEHOLDER
+          - grafana.prod.lesaiglesbraves.online
   
   # Default dashboards
   dashboardProviders:
@@ -101,16 +101,9 @@ grafana:
           options:
             path: /var/lib/grafana/dashboards/default
   
-  # Data sources
-  datasources:
-    datasources.yaml:
-      apiVersion: 1
-      datasources:
-        - name: Prometheus
-          type: prometheus
-          url: http://prometheus-kube-prometheus-prometheus.monitoring:9090
-          access: proxy
-          isDefault: true
+  # Use the default Prometheus datasource created by the chart
+  # The chart automatically creates a datasource pointing to the Prometheus instance
+  defaultDatasourceScrapeInterval: 30s
 
 # Alertmanager configuration
 alertmanager:
