@@ -28,13 +28,13 @@ $clusters = @{
 function Get-ClusterStatus {
     param($ResourceGroup, $ClusterName)
     
-    $status = az aks show --resource-group $ResourceGroup --name $ClusterName --query "powerState.code" -o tsv 2>&1
+    $result = az aks show --resource-group $ResourceGroup --name $ClusterName --query "{powerState:powerState.code, provisioningState:provisioningState}" -o json 2>&1
     
     if ($LASTEXITCODE -ne 0) {
-        return "ERROR"
+        return @{powerState="ERROR"; provisioningState="ERROR"}
     }
     
-    return $status
+    return ($result | ConvertFrom-Json)
 }
 
 function Stop-AKSCluster {
@@ -42,27 +42,44 @@ function Stop-AKSCluster {
     
     Write-Host "`n[$ClusterName] Stopping $Description..." -ForegroundColor Yellow
     
-    $currentStatus = Get-ClusterStatus -ResourceGroup $ResourceGroup -ClusterName $ClusterName
+    $status = Get-ClusterStatus -ResourceGroup $ResourceGroup -ClusterName $ClusterName
     
-    if ($currentStatus -eq "Stopped") {
-        Write-Host "  ✓ Already stopped" -ForegroundColor Gray
-        return
-    }
-    
-    if ($currentStatus -eq "ERROR") {
+    if ($status.powerState -eq "ERROR") {
         Write-Host "  ✗ Error getting cluster status" -ForegroundColor Red
         return
     }
     
-    Write-Host "  Current status: $currentStatus" -ForegroundColor White
+    # Check if already stopped
+    if ($status.powerState -eq "Stopped" -and $status.provisioningState -eq "Succeeded") {
+        Write-Host "  ✓ Already stopped" -ForegroundColor Gray
+        return
+    }
+    
+    # Check if stop operation is in progress
+    if ($status.powerState -eq "Stopped" -and $status.provisioningState -eq "Stopping") {
+        Write-Host "  ⏳ Stop operation already in progress..." -ForegroundColor Cyan
+        Write-Host "  Wait 1-2 minutes for it to complete" -ForegroundColor White
+        return
+    }
+    
+    # Check if any other operation is in progress
+    if ($status.provisioningState -ne "Succeeded") {
+        Write-Host "  ⏳ Cluster is busy (state: $($status.provisioningState))" -ForegroundColor Yellow
+        Write-Host "  Wait for current operation to complete" -ForegroundColor White
+        return
+    }
+    
+    Write-Host "  Current status: $($status.powerState)" -ForegroundColor White
     Write-Host "  Stopping cluster (this may take 2-3 minutes)..." -ForegroundColor Yellow
     
-    az aks stop --resource-group $ResourceGroup --name $ClusterName --no-wait
+    $ErrorActionPreference = "Continue"
+    az aks stop --resource-group $ResourceGroup --name $ClusterName --no-wait 2>&1 | Out-Null
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  ✓ Stop command sent successfully" -ForegroundColor Green
     } else {
         Write-Host "  ✗ Failed to stop cluster" -ForegroundColor Red
+        az aks stop --resource-group $ResourceGroup --name $ClusterName --no-wait
     }
 }
 
@@ -71,27 +88,44 @@ function Start-AKSCluster {
     
     Write-Host "`n[$ClusterName] Starting $Description..." -ForegroundColor Yellow
     
-    $currentStatus = Get-ClusterStatus -ResourceGroup $ResourceGroup -ClusterName $ClusterName
+    $status = Get-ClusterStatus -ResourceGroup $ResourceGroup -ClusterName $ClusterName
     
-    if ($currentStatus -eq "Running") {
-        Write-Host "  ✓ Already running" -ForegroundColor Gray
-        return
-    }
-    
-    if ($currentStatus -eq "ERROR") {
+    if ($status.powerState -eq "ERROR") {
         Write-Host "  ✗ Error getting cluster status" -ForegroundColor Red
         return
     }
     
-    Write-Host "  Current status: $currentStatus" -ForegroundColor White
+    # Check if already running
+    if ($status.powerState -eq "Running" -and $status.provisioningState -eq "Succeeded") {
+        Write-Host "  ✓ Already running" -ForegroundColor Gray
+        return
+    }
+    
+    # Check if start operation is in progress
+    if ($status.powerState -eq "Running" -and $status.provisioningState -eq "Starting") {
+        Write-Host "  ⏳ Start operation already in progress..." -ForegroundColor Cyan
+        Write-Host "  Wait 5-7 minutes for it to complete" -ForegroundColor White
+        return
+    }
+    
+    # Check if any other operation is in progress
+    if ($status.provisioningState -ne "Succeeded") {
+        Write-Host "  ⏳ Cluster is busy (state: $($status.provisioningState))" -ForegroundColor Yellow
+        Write-Host "  Wait for current operation to complete" -ForegroundColor White
+        return
+    }
+    
+    Write-Host "  Current status: $($status.powerState)" -ForegroundColor White
     Write-Host "  Starting cluster (this may take 5-7 minutes)..." -ForegroundColor Yellow
     
-    az aks start --resource-group $ResourceGroup --name $ClusterName --no-wait
+    $ErrorActionPreference = "Continue"
+    az aks start --resource-group $ResourceGroup --name $ClusterName --no-wait 2>&1 | Out-Null
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "  ✓ Start command sent successfully" -ForegroundColor Green
     } else {
         Write-Host "  ✗ Failed to start cluster" -ForegroundColor Red
+        az aks start --resource-group $ResourceGroup --name $ClusterName --no-wait
     }
 }
 
@@ -100,7 +134,7 @@ function Show-ClusterStatus {
     
     $status = Get-ClusterStatus -ResourceGroup $ResourceGroup -ClusterName $ClusterName
     
-    $statusColor = switch ($status) {
+    $powerStateColor = switch ($status.powerState) {
         "Running" { "Green" }
         "Stopped" { "Yellow" }
         "ERROR" { "Red" }
@@ -110,9 +144,14 @@ function Show-ClusterStatus {
     Write-Host "  [$ClusterName] " -NoNewline -ForegroundColor White
     Write-Host "$Description" -NoNewline -ForegroundColor Gray
     Write-Host " → " -NoNewline
-    Write-Host "$status" -ForegroundColor $statusColor
+    Write-Host "$($status.powerState)" -ForegroundColor $powerStateColor
     
-    if ($status -eq "Running") {
+    # Show provisioning state if not Succeeded
+    if ($status.provisioningState -ne "Succeeded" -and $status.provisioningState -ne "ERROR") {
+        Write-Host "    State: $($status.provisioningState)" -ForegroundColor Cyan
+    }
+    
+    if ($status.powerState -eq "Running" -and $status.provisioningState -eq "Succeeded") {
         # Get node count
         $nodeCount = az aks show --resource-group $ResourceGroup --name $ClusterName --query "agentPoolProfiles[0].count" -o tsv 2>$null
         if ($nodeCount) {
