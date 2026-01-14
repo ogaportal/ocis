@@ -367,7 +367,7 @@ spec:
           value: "/var/lib/ocis"
         # Use builtin IDP instead of external LDAP
         - name: IDP_LDAP_BIND_DN
-          value: "uid=reva,ou=sysusers,o=libregraph-idm"
+          value: "uid=libregraph,ou=sysusers,o=libregraph-idm"
         - name: IDP_LDAP_BIND_PASSWORD
           valueFrom:
             secretKeyRef:
