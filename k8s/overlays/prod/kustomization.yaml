@@ -42,5 +42,5 @@ secretGenerator:
   - name: ocis-secret
     behavior: merge
     literals:
-      - admin-password=PROD_ADMIN_PASSWORD_PLACEHOLDER
+      - admin-password=__ADMIN_PASSWORD__
       - admin-email=stephane.nzali@gmail.com

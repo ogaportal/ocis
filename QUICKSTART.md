@@ -77,7 +77,6 @@ az storage container create \
    ```
 3. **Accéder aux applications** :
    - OCIS : https://dev.lesaiglesbraves.online
-   - Keycloak : https://dev.lesaiglesbraves.online (admin console)
 
 ## 🛠️ Démarrage rapide local (développeurs)
 
@@ -145,29 +144,6 @@ ansible-playbook deploy.yml -i inventories/hosts -e @inventories/dev.yml -e targ
 ./scripts/manage-certificates.sh dev create
 ```
 
-## ⚙️ Configuration Keycloak
-
-Après le premier déploiement :
-
-1. **Se connecter à Keycloak** : https://dev.lesaiglesbraves.online
-2. **Récupérer le mot de passe admin** :
-```bash
-kubectl get secret keycloak-secret -n owncloud -o jsonpath='{.data.admin-password}' | base64 -d
-```
-3. **Créer un realm** : `owncloud`
-4. **Créer un client OIDC** :
-   - Client ID: `ocis`
-   - Access Type: `confidential`
-   - Valid Redirect URIs: `https://dev.lesaiglesbraves.online/*`
-5. **Copier le Client Secret** et mettre à jour :
-```bash
-kubectl edit secret ocis-secret -n owncloud
-# Encoder le secret en base64 et remplacer oidc-client-secret
-```
-6. **Redémarrer OCIS** :
-```bash
-kubectl rollout restart deployment/ocis -n owncloud
-```
 
 ## 📍 Commandes utiles
 

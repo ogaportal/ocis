@@ -356,19 +356,69 @@ jobs:
           
           echo "✅ Cleanup completed"
 
-      - name: Deploy Applications with Ansible
+      - name: Prepare Kustomization with Admin Password
         run: |
           ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
-          echo "🚀 Deploying applications to $ENVIRONMENT..."
+          echo "🔐 Preparing kustomization with admin password from GitHub Secrets..."
           
-          ansible-playbook \
-            -i ansible/inventories/$ENVIRONMENT.yml \
-            ansible/deploy.yml \
-            -e "target_env=$ENVIRONMENT"
+          # Récupérer le mot de passe depuis les GitHub Secrets
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            ADMIN_PASSWORD="${{ secrets.OCIS_ADMIN_PASSWORD_PROD }}"
+          else
+            ADMIN_PASSWORD="${{ secrets.OCIS_ADMIN_PASSWORD_DEV }}"
+          fi
+          
+          # Vérifier que le secret est défini
+          if [ -z "$ADMIN_PASSWORD" ]; then
+            echo "❌ Error: OCIS_ADMIN_PASSWORD_$ENVIRONMENT secret not set in GitHub!"
+            echo "Please configure the secret in Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          
+          # Créer un répertoire temporaire avec la configuration modifiée
+          TEMP_DIR="k8s/overlays/${ENVIRONMENT}-temp"
+          mkdir -p "$TEMP_DIR"
+          
+          # Copier et modifier le kustomization.yaml
+          sed "s/__ADMIN_PASSWORD__/$ADMIN_PASSWORD/g" \
+            "k8s/overlays/$ENVIRONMENT/kustomization.yaml" > "$TEMP_DIR/kustomization.yaml"
+          
+          echo "✅ Kustomization prepared with admin password"
+          echo "KUSTOMIZE_DIR=$TEMP_DIR" >> $GITHUB_ENV
 
-      - name: Generate and Set Application Secrets
+      - name: Deploy oCIS with Kustomize
         run: |
-          echo "🔐 Generating random secrets for applications..."
+          ENVIRONMENT="${{ needs.set-environment.outputs.environment }}"
+          echo "🚀 Deploying oCIS to $ENVIRONMENT..."
+          
+          # Supprimer le deployment existant pour forcer la recréation avec les nouveaux secrets
+          kubectl delete deployment ocis -n owncloud --ignore-not-found=true
+          echo "Waiting for deployment deletion..."
+          sleep 5
+          
+          # Appliquer avec le kustomization modifié
+          kubectl apply -k "$KUSTOMIZE_DIR"
+          
+          # Nettoyer le répertoire temporaire
+          rm -rf "$KUSTOMIZE_DIR"
+          
+          echo "✅ Deployment completed"
+
+      - name: Wait for oCIS Pod
+        run: |
+          echo "⏳ Waiting for oCIS pod to be ready..."
+          kubectl wait --for=condition=ready pod -l app=ocis -n owncloud --timeout=300s
+          
+          # Vérifier que le mot de passe est correct
+          echo "🔍 Verifying admin password in pod..."
+          POD_NAME=$(kubectl get pods -n owncloud -l app=ocis -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n owncloud $POD_NAME -- env | grep "ADMIN_PASSWORD" || true
+          
+          echo "✅ Pod is ready"
+
+      - name: Generate Additional Secrets
+        run: |
+          echo "🔐 Generating additional secrets (JWT, API keys)..."
           
           # Attendre que le secret soit créé par Kustomize
           echo "Waiting for ocis-secret to be created..."
@@ -391,25 +441,33 @@ jobs:
             exit 1
           fi
           
-          # Générer des secrets aléatoires
-          JWT_SECRET=$(openssl rand -base64 32)
-          TRANSFER_SECRET=$(openssl rand -base64 32)
-          MACHINE_AUTH_API_KEY=$(openssl rand -base64 32)
-          SYSTEM_USER_API_KEY=$(openssl rand -base64 32)
-          OCIS_ADMIN_PASSWORD=$(openssl rand -base64 24)
+          # Vérifier si les secrets existent déjà
+          NEEDS_GENERATION=false
+          if ! kubectl get secret $SECRET_NAME -n owncloud -o jsonpath='{.data.jwt-secret}' 2>/dev/null | base64 -d | grep -q .; then
+            NEEDS_GENERATION=true
+          fi
           
-          # Patcher le secret ocis-secret avec tous les secrets nécessaires
-          kubectl patch secret $SECRET_NAME -n owncloud --type='json' -p='[
-            {"op": "replace", "path": "/data/admin-password", "value": "'$(echo -n "$OCIS_ADMIN_PASSWORD" | base64 -w0)'"},
-            {"op": "replace", "path": "/data/jwt-secret", "value": "'$(echo -n "$JWT_SECRET" | base64 -w0)'"},
-            {"op": "replace", "path": "/data/transfer-secret", "value": "'$(echo -n "$TRANSFER_SECRET" | base64 -w0)'"},
-            {"op": "replace", "path": "/data/machine-auth-api-key", "value": "'$(echo -n "$MACHINE_AUTH_API_KEY" | base64 -w0)'"},
-            {"op": "replace", "path": "/data/system-user-api-key", "value": "'$(echo -n "$SYSTEM_USER_API_KEY" | base64 -w0)'"}
-          ]'
-          
-          echo "✅ Secrets generated and applied"
-          echo "⚠️ Save these credentials securely:"
-          echo "- OCIS Admin Password: $OCIS_ADMIN_PASSWORD"
+          if [ "$NEEDS_GENERATION" = "true" ]; then
+            echo "Generating random secrets for JWT, transfer, and API keys..."
+            
+            # Générer des secrets aléatoires
+            JWT_SECRET=$(openssl rand -base64 32)
+            TRANSFER_SECRET=$(openssl rand -base64 32)
+            MACHINE_AUTH_API_KEY=$(openssl rand -base64 32)
+            SYSTEM_USER_API_KEY=$(openssl rand -base64 32)
+            
+            # Patcher le secret avec les secrets supplémentaires (sans toucher admin-password)
+            kubectl patch secret $SECRET_NAME -n owncloud --type='json' -p='[
+              {"op": "add", "path": "/data/jwt-secret", "value": "'$(echo -n "$JWT_SECRET" | base64 -w0)'"},
+              {"op": "add", "path": "/data/transfer-secret", "value": "'$(echo -n "$TRANSFER_SECRET" | base64 -w0)'"},
+              {"op": "add", "path": "/data/machine-auth-api-key", "value": "'$(echo -n "$MACHINE_AUTH_API_KEY" | base64 -w0)'"},
+              {"op": "add", "path": "/data/system-user-api-key", "value": "'$(echo -n "$SYSTEM_USER_API_KEY" | base64 -w0)'"}
+            ]'
+            
+            echo "✅ Additional secrets generated and applied"
+          else
+            echo "✅ Secrets already exist, skipping generation"
+          fi
 
       - name: Wait for Deployments
         run: |
