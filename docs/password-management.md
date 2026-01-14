@@ -2,7 +2,7 @@
 
 Ce document explique comment configurer les mots de passe pour les environnements dev et prod, à la fois pour le déploiement local et le pipeline CI/CD.
 
-## 🔐 Configuration des GitHub Secrets
+## 🔐 Configuration des GitHub Secrets (OBLIGATOIRE pour le pipeline)
 
 Pour que le pipeline fonctionne correctement, vous devez configurer deux secrets dans GitHub :
 
@@ -12,7 +12,7 @@ Pour que le pipeline fonctionne correctement, vous devez configurer deux secrets
 ### Comment ajouter les secrets GitHub :
 
 1. Allez sur votre dépôt GitHub
-2. Cliquez sur **Settings** → **Secrets and variables** → **Actions**
+2. Cliquez sur **Settings** → **Secrets and variables** → Actions**
 3. Cliquez sur **New repository secret**
 4. Ajoutez les deux secrets :
    - Name: `OCIS_ADMIN_PASSWORD_DEV`
@@ -21,11 +21,28 @@ Pour que le pipeline fonctionne correctement, vous devez configurer deux secrets
    - Name: `OCIS_ADMIN_PASSWORD_PROD`
      Value: `5T3phane` (ou votre mot de passe prod)
 
+**IMPORTANT** : Sans ces secrets, le pipeline échouera avec l'erreur :
+```
+❌ Error: OCIS_ADMIN_PASSWORD_XXX secret not set in GitHub!
+```
+
 ## 📝 Fichiers kustomization.yaml
 
-Les fichiers `k8s/overlays/{dev,prod}/kustomization.yaml` contiennent maintenant un placeholder `__ADMIN_PASSWORD__` au lieu du mot de passe en clair.
+Les fichiers `k8s/overlays/{dev,prod}/kustomization.yaml` contiennent un placeholder `__ADMIN_PASSWORD__` :
 
-**IMPORTANT** : Ne commitez JAMAIS de mot de passe en clair dans ces fichiers !
+```yaml
+secretGenerator:
+  - name: ocis-secret
+    behavior: merge
+    literals:
+      - admin-password=__ADMIN_PASSWORD__  # ← Placeholder
+      - admin-email=stephane.nzali@gmail.com
+```
+
+**IMPORTANT** : 
+- ❌ Ne JAMAIS remplacer manuellement ce placeholder dans Git
+- ❌ Ne JAMAIS commiter de mot de passe en clair
+- ✅ Le placeholder est remplacé automatiquement au déploiement
 
 ## 🚀 Déploiement Local
 
@@ -39,42 +56,53 @@ Pour déployer localement avec un mot de passe spécifique, utilisez le script P
 .\scripts\deploy-with-password.ps1 -Environment prod -AdminPassword "5T3phane"
 ```
 
-Ce script :
-1. Remplace temporairement le placeholder par le mot de passe
-2. Applique la configuration avec kubectl
-3. Nettoie les fichiers temporaires
-4. Vérifie que le mot de passe est correctement configuré
+**Ce script :**
+1. Remplace temporairement `__ADMIN_PASSWORD__` par le mot de passe réel
+2. Supprime le deployment existant
+3. Applique la configuration avec kubectl
+4. Nettoie les fichiers temporaires
+5. Vérifie que le mot de passe est correctement configuré
+
+**⚠️ N'utilisez JAMAIS `kubectl apply -k` directement** - utilisez toujours le script !
 
 ## 🔄 Pipeline CI/CD
 
-Le pipeline GitHub Actions (`.github/workflows/build-and-deploy.yml`) :
+Le pipeline GitHub Actions (`.github/workflows/build-and-deploy.yml`) fonctionne ainsi :
+
+### Étapes du pipeline :
 
 1. **Build** : Valide les configurations Terraform, Kubernetes et Ansible
 2. **Certificates** : Génère ou vérifie les certificats SSL
 3. **Terraform** : Déploie l'infrastructure Azure (AKS, KeyVault, Storage)
 4. **Deploy Apps** : 
-   - Applique les manifests Kubernetes avec kustomize
-   - Récupère le mot de passe depuis les GitHub Secrets
-   - Patch le secret Kubernetes avec le bon mot de passe
-   - Génère les autres secrets (JWT, transfer, API keys)
+   - Récupère le mot de passe depuis les GitHub Secrets (`OCIS_ADMIN_PASSWORD_DEV` ou `PROD`)
+   - Crée un répertoire temporaire `k8s/overlays/{env}-temp`
+   - Remplace `__ADMIN_PASSWORD__` par le vrai mot de passe
+   - Supprime le deployment existant
+   - Applique `kubectl apply -k` sur le répertoire temporaire
+   - Nettoie le répertoire temporaire
+   - Attend que le pod soit prêt
+   - Génère les autres secrets (JWT, API keys) s'ils n'existent pas
 
 ### Branches et environnements :
 
-- **develop** → déploie en **dev**
-- **main** → déploie en **prod**
+- **develop** → déploie en **dev** avec `OCIS_ADMIN_PASSWORD_DEV`
+- **main** → déploie en **prod** avec `OCIS_ADMIN_PASSWORD_PROD`
 - **Pull Requests** → validation seulement (pas de déploiement)
 
-## ⚠️ Sécurité
+### Sécurité du pipeline :
 
-### ✅ Bonnes pratiques :
-- Mots de passe stockés dans GitHub Secrets (chiffrés)
-- Placeholder dans les fichiers Git
-- Secrets générés automatiquement pour JWT, transfer, etc.
+✅ **Ce qui est sécurisé :**
+- Mots de passe stockés dans GitHub Secrets (chiffrés par GitHub)
+- Placeholder dans les fichiers Git (pas de mot de passe en clair)
+- Remplacement du placeholder AVANT le déploiement
+- Répertoire temporaire supprimé après le déploiement
+- Secrets JWT/API générés automatiquement
 
-### ❌ À éviter :
-- NE JAMAIS commiter de mot de passe en clair
-- NE PAS partager les GitHub Secrets
-- NE PAS exposer les mots de passe dans les logs
+❌ **Si le secret GitHub n'est pas configuré :**
+- Le pipeline échouera immédiatement
+- Message d'erreur clair indiquant le problème
+- Pas de déploiement avec des valeurs par défaut dangereuses
 
 ## 🔍 Vérification
 
